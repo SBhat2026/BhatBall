@@ -1,0 +1,13 @@
+{
+  "name": "pastel-pitch",
+  "version": "0.1.0",
+  "description": "Pastel FIFA-style 11v11 soccer — Three.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "three": "^0.170.0",
+    "ws": "^8.21.0"
+  }
+}
