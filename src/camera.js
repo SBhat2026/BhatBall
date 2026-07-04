@@ -35,14 +35,24 @@ export class GameCamera {
     this.camera.lookAt(this.look);
   }
 
-  update(dt, ball, player) {
+  // throwSp: near-side throw-in set piece → swing infield to face the thrower
+  update(dt, ball, player, throwSp = null) {
     const tPos = new THREE.Vector3();
     const tLook = new THREE.Vector3();
 
-    if (this.mode === 'broadcast') {
+    if (this.mode === 'broadcast' && throwSp) {
+      const t = throwSp.taker.pos;
       const f = frame();
-      tPos.set(clamp(ball.pos.x * 0.85, -f.xCap, f.xCap), f.y, f.z);
-      tLook.set(ball.pos.x * 0.9, 2.4, ball.pos.z * 0.5);
+      tPos.set(clamp(t.x, -f.xCap, f.xCap), 7.5, t.z - (FIELD.halfW * 0.55 + 3));
+      tLook.set(t.x, 1.4, t.z);
+      this.pos.lerp(tPos, damp(2.6, dt));
+      this.look.lerp(tLook, damp(3.6, dt));
+    } else if (this.mode === 'broadcast') {
+      const f = frame();
+      // near-side action: rise and tilt down so play by the close touchline stays framed
+      const nearK = clamp((ball.pos.z / FIELD.halfW - 0.3) / 0.7, 0, 1);
+      tPos.set(clamp(ball.pos.x * 0.85, -f.xCap, f.xCap), f.y + nearK * 5, f.z + nearK * 2.5);
+      tLook.set(ball.pos.x * 0.9, 2.4 - nearK * 1.7, ball.pos.z * (0.5 + nearK * 0.35));
       this.pos.lerp(tPos, damp(3.2, dt));
       this.look.lerp(tLook, damp(4.5, dt));
     } else {

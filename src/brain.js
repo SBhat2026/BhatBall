@@ -52,6 +52,7 @@ export function updateBrains(match, dt) {
   }
 
   for (const team of [match.teamA, match.teamB]) {
+    if (team.buildupT > 0) team.buildupT -= dt; // post-pass surge window (human release)
     const style = team.style, adapt = team.adapt ?? NO_ADAPT, diff = team.diff;
     const opp = match.otherTeam(team);
     const attacking = match.controllerTeam === team;
@@ -230,9 +231,21 @@ export function updateBrains(match, dt) {
             let s = Math.min(open, 8) * 0.7 + (sx - owner.pos.x) * dir * 0.15
               - Math.hypot(p.pos.x - sx, p.pos.z - sz) * 0.22
               + (laneBlocked(match, owner, sx, sz) ? -3 : 3);
+            // don't offer where a teammate already stands
+            let mateNear = 1e9;
+            for (const m2 of team.players) {
+              if (m2 === p || m2 === owner || m2.isGK) continue;
+              mateNear = Math.min(mateNear, Math.hypot(m2.pos.x - sx, m2.pos.z - sz));
+            }
+            if (mateNear < 5) s -= (5 - mateNear) * 0.9;
             if (s > bestS) { bestS = s; bestSpot = { sx, sz }; }
           }
-          if (bestSpot) cands.push({ act: 'support', tx: bestSpot.sx, tz: bestSpot.sz, s: (6 + bestS) * sw });
+          if (bestSpot) {
+            cands.push({
+              act: 'support', tx: bestSpot.sx, tz: bestSpot.sz,
+              s: (6 + bestS) * sw + (team.buildupT > 0 ? 1.5 : 0),
+            });
+          }
         }
         // give-and-go: just released a pass — burst past the new carrier for the return
         if (p.oneTwoT > 0 && distXZ(p.pos, owner.pos) < 26 * K) {
@@ -252,7 +265,8 @@ export function updateBrains(match, dt) {
             : Math.sign(p.base.z || 1) * FIELD.halfW * 0.32;
           cands.push({
             act: 'runBehind', tx: dir * txl, tz,
-            s: (7 + style.counter * 3 + style.chemistry * 2 + (transA ? 3 : 0)) * rw,
+            s: (7 + style.counter * 3 + style.chemistry * 2 + (transA ? 3 : 0)) * rw
+              + (team.buildupT > 0 ? 2.5 : 0),
           });
         }
         // hold width
@@ -278,8 +292,14 @@ export function updateBrains(match, dt) {
           });
         }
       } else if (looseBall) {
-        // second body toward a loose ball
-        if (dBall < 20 * K) cands.push({ act: 'chase2', tx: ball.pos.x, tz: ball.pos.z, s: 8 - dBall * 0.3 });
+        // second body toward a loose ball — but not a whole herd
+        if (dBall < 20 * K) {
+          let herd = 0;
+          for (const m2 of team.players) {
+            if (m2 !== p && !m2.isGK && distXZ(m2.pos, ball.pos) < 6 * K) herd++;
+          }
+          cands.push({ act: 'chase2', tx: ball.pos.x, tz: ball.pos.z, s: 8 - dBall * 0.3 - herd * 2.2 });
+        }
       }
 
       // pick: noise + stickiness

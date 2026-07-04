@@ -14,6 +14,7 @@ import { GameCamera } from './camera.js';
 import { AudioEngine } from './audio.js';
 import { Net, RemoteInput, encodeSnapshot, rigFx } from './net.js';
 import { BALL_STYLES, getWins, addWin, isUnlocked, currentBallId, setBallId, previewURL } from './balls.js';
+import { flagURL, flagHTML } from './flags.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
 import { animateRig } from './rig.js';
@@ -89,6 +90,37 @@ function updateReticle(g) {
   if (aim) g.reticle.position.set(aim.x, 0, aim.z);
 }
 
+function makePassRing(scene) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.62, 0.82, 26),
+    new THREE.MeshBasicMaterial({
+      color: '#a8e8b8', transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false,
+    }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.05;
+  ring.visible = false;
+  scene.add(ring);
+  return ring;
+}
+
+// while charging a pass/chip, ring the teammate the release would pick
+function updatePassRing(g) {
+  const m = g.match;
+  const ch = input.charging;
+  const h = m?.seats?.H;
+  let mate = null;
+  if (h && ch && (ch.type === 'pass' || ch.type === 'chip') && m.ball.owner === h) {
+    const held = (performance.now() - ch.t0) / 1000;
+    const aim = input.aimPoint();
+    mate = ch.type === 'chip'
+      ? m._passTargetFor(h, input, 8, 16 + 30 * Math.min(1, held / 0.9), true, aim)
+      : m._passTargetFor(h, input, held > 0.32 ? 6 : 4, held > 0.32 ? 45 : 34, held > 0.32, aim);
+  }
+  g.passRing.visible = !!mate;
+  if (mate) g.passRing.position.set(mate.pos.x, 0, mate.pos.z);
+}
+
 // --- dev mode (invisible adaptation feed) -----------------------------------
 
 const dev = { on: sessionStorage.getItem('pp-dev') === '1' };
@@ -131,7 +163,7 @@ const sel = {
   ball: currentBallId(),
 };
 
-const chipHTML = (t) => `<span class="sw" style="background:${t.shirt}; --sw2:${t.sleeve}"></span>${t.code}`;
+const chipHTML = (t) => `${flagHTML(t.code)}${t.code}`;
 
 function buildChips(container, items, render, onPick) {
   container.innerHTML = '';
@@ -263,9 +295,9 @@ function showBanner(text, ms) {
   if (ms) bannerTimer = setTimeout(() => { b.style.opacity = 0; }, ms);
 }
 
-function setScoreboard(codeA, colorA, codeB, colorB) {
-  $('swA').style.background = colorA;
-  $('swB').style.background = colorB;
+function setScoreboard(codeA, codeB) {
+  $('swA').style.background = `url(${flagURL(codeA)}) center/cover`;
+  $('swB').style.background = `url(${flagURL(codeB)}) center/cover`;
   $('codeA').textContent = codeA;
   $('codeB').textContent = codeB;
 }
@@ -309,7 +341,8 @@ function buildScene(stadiumId) {
   const confetti = new Confetti(scene);
   const cam = new GameCamera(camera);
   const reticle = makeReticle(scene);
-  return { scene, sfx, confetti, cam, reticle, composer: makeComposer(scene, preset), preset };
+  const passRing = makePassRing(scene);
+  return { scene, sfx, confetti, cam, reticle, passRing, composer: makeComposer(scene, preset), preset };
 }
 
 // --- goal replays (single-player): goal cam → player cam → cinematic ---------
@@ -519,7 +552,7 @@ function startHostedMatch(cfg) {
   if (cfg.restore) match.restoreState(cfg.restore);
   base.cam.snap(match.ball);
 
-  setScoreboard(teamADef.code, kits.a.shirt, teamBDef.code, kits.b.shirt);
+  setScoreboard(teamADef.code, teamBDef.code);
   setScore(match.scoreA, match.scoreB, match.clockText());
 
   $('menu').classList.add('hidden');
@@ -692,7 +725,7 @@ function openTabMenu() {
     const el = document.createElement('div');
     el.className = 'chip';
     el.style.minWidth = '150px';
-    el.innerHTML = `<span class="sw" style="background:${teamDef.shirt}"></span><b>${p.num}</b>&nbsp;${p.name}&nbsp;<span style="color:#9aa2b1">${p.role}</span>`;
+    el.innerHTML = `${flagHTML(teamDef.code)}<b>${p.num}</b>&nbsp;${p.name}&nbsp;<span style="color:#9aa2b1">${p.role}</span>`;
     if (p.i === 0) { el.style.opacity = 0.4; el.style.cursor = 'default'; }
     else el.onclick = () => {
       if (game.kind === 'client') net?.sendInput({ e: [{ type: 'switchTo', idx: p.i }] });
@@ -996,7 +1029,7 @@ function bracketHTML() {
     for (const m of round) {
       const row = (e, win) => e
         ? `<div style="display:flex;gap:6px;align-items:center;${win ? 'font-weight:800;' : 'opacity:.75;'}">
-             <span class="sw" style="width:10px;height:10px;border-radius:3px;background:${e.team != null ? TEAMS[e.team].shirt : '#ddd'}"></span>
+             ${e.team != null ? flagHTML(TEAMS[e.team].code) : '<span class="sw" style="width:10px;height:10px;border-radius:3px;background:#ddd"></span>'}
              ${e.name}${e.clientId === null ? ' <span style="font-size:10px;color:#b5bac4">CPU</span>' : ''}</div>`
         : '<div style="color:#c9ced8">—</div>';
       html += `<div style="background:#fafbfd;border-radius:10px;padding:7px 10px;margin-bottom:7px;font-size:12.5px;">
@@ -1023,7 +1056,7 @@ function handleCast(d) {
       const base = buildScene(d.stadium);
       clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientFixture.mode, String(myId), d.ball);
       game = { kind: 'client', ...base, view: clientView, sendT: 0, tabOpen: false, slow: -1, paused: false };
-      setScoreboard(clientFixture.aDef.code, clientFixture.kits.a.shirt, clientFixture.bDef.code, clientFixture.kits.b.shirt);
+      setScoreboard(clientFixture.aDef.code, clientFixture.bDef.code);
       $('lobby').classList.add('hidden');
       $('bracketOverlay').classList.add('hidden');
       $('hud').classList.remove('hidden');
@@ -1160,12 +1193,23 @@ function frame(now) {
 
     game.match.update(simDt, inputs, evmap);
     updateReticle(game);
+    updatePassRing(game);
+    // crowd leans in when the ball reaches an attacking third
+    game.tensionT = (game.tensionT ?? 0) - dt;
+    if (game.tensionT <= 0) {
+      game.tensionT = 0.3;
+      const bx = Math.abs(game.match.ball.pos.x) / FIELD.halfL;
+      audio.setTension(clamp((bx - 0.55) / 0.45, 0, 1));
+    }
     game.rec?.tick(game.match, simDt);
     game.confetti.update(simDt);
     game.sfx.update(simDt);
     game.trail.update(game.match.ball, simDt);
     const hero = game.match.seats.H ?? game.match.teamA.players[game.match.teamA.kickerIdx];
-    game.cam.update(dt, game.match.ball, hero);
+    // near-side throw-ins: cut to an infield angle facing the thrower, then back
+    const spNow = game.match.setPiece;
+    const throwSp = spNow?.kind === 'throwin' && spNow.taker.pos.z > 0 ? spNow : null;
+    game.cam.update(dt, game.match.ball, hero, throwSp);
 
     // cast snapshots at 15Hz
     if (game.kind === 'host' && net) {

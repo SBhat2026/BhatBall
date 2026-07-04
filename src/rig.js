@@ -7,6 +7,27 @@ import * as THREE from 'three';
 const HAIR_COLORS = ['#2e2a28', '#4a3826', '#7a5a38', '#c9b18a', '#5a5f6b'];
 const numberTexCache = new Map();
 const kitTexCache = new Map();
+const nameTexCache = new Map();
+
+function nameTexture(name) {
+  if (nameTexCache.has(name)) return nameTexCache.get(name);
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const ctx = cv.getContext('2d');
+  ctx.font = '700 30px -apple-system, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.strokeStyle = '#3a3f4ccc';
+  ctx.lineWidth = 5;
+  ctx.lineJoin = 'round';
+  ctx.strokeText(name, 128, 34);
+  ctx.fillStyle = '#f6f7fa';
+  ctx.fillText(name, 128, 34);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  nameTexCache.set(name, tex);
+  return tex;
+}
 
 const luminance = (hex) => {
   const n = parseInt(hex.slice(1), 16);
@@ -136,6 +157,17 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   const armR = mkLimb(0.38, 1.4, 0.12, 0.27, 0.23, sleeve, isGK ? sleeve : skinTone);
 
   if (opts.captain) add(new THREE.BoxGeometry(0.15, 0.09, 0.15), mat('#f0c890'), 0, -0.14, 0, armL);
+
+  // floating name tag above the head (billboard sprite, subtle)
+  if (opts.name && canPaint) {
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: nameTexture(opts.name), transparent: true, opacity: 0.82, depthWrite: false,
+    }));
+    tag.scale.set(1.9, 0.48, 1);
+    tag.position.set(0, 2.32, 0);
+    tag.renderOrder = 5;
+    g.add(tag);
+  }
 
   return {
     group: g, torso,

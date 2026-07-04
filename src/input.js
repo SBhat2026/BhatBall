@@ -48,7 +48,7 @@ export class Input {
       } else if (e.button === 2 && this.charging.type === 'pass') {
         const held = (performance.now() - this.charging.t0) / 1000;
         if (held < 0.32) this.events.push({ type: 'pass', aim: this.aim });
-        else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), aim: this.aim });
+        else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), loft: held > 1.05, aim: this.aim });
       } else return;
       this.charging = null;
     });
@@ -68,7 +68,7 @@ export class Input {
     if (c === 'Space') this.charging = { type: 'shoot', t0: performance.now() };
     else if (c === 'KeyI') this.charging = { type: 'finesse', t0: performance.now() };
     else if (c === 'KeyJ') this.charging = { type: 'pass', t0: performance.now() };
-    else if (c === 'KeyL') this.events.push({ type: 'chip', aim: this._aimNow() });
+    else if (c === 'KeyL') this.charging = { type: 'chip', t0: performance.now() };
     else if (c === 'KeyQ') this.events.push({ type: 'sombrero' });
     else if (c === 'KeyE') this.events.push({ type: 'bicycle' });
     else if (c === 'KeyK') this.events.push({ type: 'tackle' });
@@ -89,7 +89,9 @@ export class Input {
     else if (c === 'KeyJ' && this.charging?.type === 'pass') {
       const held = (performance.now() - this.charging.t0) / 1000;
       if (held < 0.32) this.events.push({ type: 'pass', aim: this._aimNow() });
-      else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), aim: this._aimNow() });
+      else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), loft: held > 1.05, aim: this._aimNow() });
+    } else if (c === 'KeyL' && this.charging?.type === 'chip') {
+      this.events.push({ type: 'chip', power: this.chargePower(), aim: this._aimNow() });
     } else return;
     this.charging = null;
   }

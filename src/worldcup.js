@@ -3,6 +3,7 @@
 // CPU-vs-CPU fixture resolves through a rating-driven Poisson sim.
 // State is plain JSON (team indices into TEAMS) so it round-trips localStorage.
 import { TEAMS } from './teams.js';
+import { flagHTML } from './flags.js';
 
 const GROUP_NAMES = ['A', 'B', 'C', 'D'];
 // round-robin pairings inside a 4-team group, by matchday
@@ -161,7 +162,7 @@ export function simToEnd(cup) {
 const chip = (i, bold = false) => {
   const t = TEAMS[i];
   return `<span style="display:inline-flex;align-items:center;gap:5px;${bold ? 'font-weight:800;' : ''}">
-    <span class="sw" style="width:11px;height:11px;border-radius:3px;background:${t.shirt};box-shadow:inset -3px 0 0 ${t.sleeve};"></span>${t.code}</span>`;
+    ${flagHTML(t.code)}${t.code}</span>`;
 };
 
 export function cupHTML(cup) {

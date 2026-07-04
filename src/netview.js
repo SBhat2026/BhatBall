@@ -23,7 +23,7 @@ export class NetView {
         const isGK = slot.role === 'GK';
         const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
         const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-        const rig = buildRig(kit, skin, isGK, { number: entry[0], captain: i === 6 });
+        const rig = buildRig(kit, skin, isGK, { number: entry[0], captain: i === 6, name: entry[1] });
         this.scene.add(rig.group);
         this.players.push({
           rig,

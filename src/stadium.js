@@ -213,17 +213,18 @@ function buildStands(scene, preset) {
     scene.add(m);
   };
 
+  const TIERS = 4; // big-bowl feel: one more ring than the original ground
   const sides = [
-    { cx: 0, cz: 1, len: halfL * 2 + 14, off: halfW, rot: 0 },       // touchlines
-    { cx: 1, cz: 0, len: halfW * 2 + 14, off: halfL, rot: Math.PI / 2 }, // goal ends
+    { cx: 0, cz: 1, len: halfL * 2 + 20, off: halfW, rot: 0 },       // touchlines
+    { cx: 1, cz: 0, len: halfW * 2 + 20, off: halfL, rot: Math.PI / 2 }, // goal ends
   ];
   for (const side of sides) {
     for (const s of [-1, 1]) {
-      for (let k = 0; k < 3; k++) {
-        const dist = side.off + 9 + k * 4;
-        const y = 1.1 + k * 2.3;
-        if (side.cz) tierBox(0, s * dist, side.len, 4, y, 0);
-        else tierBox(s * dist, 0, 4, side.len, y, 0);
+      for (let k = 0; k < TIERS; k++) {
+        const dist = side.off + 10 + k * 4.2;
+        const y = 1.1 + k * 2.4;
+        if (side.cz) tierBox(0, s * dist, side.len, 4.2, y, 0);
+        else tierBox(s * dist, 0, 4.2, side.len, y, 0);
         // seat rows on top of each tier
         for (let row = 0; row < 2; row++) {
           const rd = dist - 1 + row * 1.6;
@@ -236,15 +237,15 @@ function buildStands(scene, preset) {
           }
         }
       }
-      // roof slab
-      const dist = side.off + 9 + 2 * 4;
+      // roof slab over the top tier
+      const dist = side.off + 10 + (TIERS - 1) * 4.2;
       if (side.cz) {
-        const r = new THREE.Mesh(new THREE.BoxGeometry(side.len, 0.4, 8), roofMat);
-        r.position.set(0, 10.5, s * (dist + 1));
+        const r = new THREE.Mesh(new THREE.BoxGeometry(side.len, 0.45, 9), roofMat);
+        r.position.set(0, 13.6, s * (dist + 1.2));
         scene.add(r);
       } else {
-        const r = new THREE.Mesh(new THREE.BoxGeometry(8, 0.4, side.len), roofMat);
-        r.position.set(s * (dist + 1), 10.5, 0);
+        const r = new THREE.Mesh(new THREE.BoxGeometry(9, 0.45, side.len), roofMat);
+        r.position.set(s * (dist + 1.2), 13.6, 0);
         scene.add(r);
       }
     }

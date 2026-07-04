@@ -6,6 +6,9 @@ export class AudioEngine {
     this.master = null;
     this.crowdGain = null;
     this._lastTouch = 0;
+    this._tension = 0;      // 0..1 — ball deep in an attacking third
+    this._crowdBase = 0.05;
+    this._duck = 1;         // commentary ducking multiplier (1 = full crowd)
   }
 
   // must be called from a user gesture
@@ -40,28 +43,41 @@ export class AudioEngine {
   }
 
   _startCrowd() {
-    const src = this.ctx.createBufferSource();
-    src.buffer = this._noiseBuffer(4);
-    src.loop = true;
+    // all crowd layers hang off one bus so commentary can duck the lot
+    this.crowdBus = this.ctx.createGain();
+    this.crowdBus.gain.value = 1;
+    this.crowdBus.connect(this.master);
 
-    const bp = this.ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.value = 700;
-    bp.Q.value = 0.5;
+    const layer = (freq, q, gain, pan, lfoHz, lfoDepth) => {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this._noiseBuffer(4 + Math.random());
+      src.loop = true;
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = q;
+      const g = this.ctx.createGain();
+      g.gain.value = gain;
+      const lfo = this.ctx.createOscillator();
+      lfo.frequency.value = lfoHz;
+      const lg = this.ctx.createGain();
+      lg.gain.value = lfoDepth;
+      lfo.connect(lg).connect(g.gain);
+      let tail = g;
+      if (this.ctx.createStereoPanner && pan) {
+        const p = this.ctx.createStereoPanner();
+        p.pan.value = pan;
+        g.connect(p); tail = p;
+      }
+      src.connect(bp).connect(g);
+      tail.connect(this.crowdBus);
+      src.start(); lfo.start();
+      return g;
+    };
 
-    this.crowdGain = this.ctx.createGain();
-    this.crowdGain.gain.value = 0.05;
-
-    // slow murmur wobble
-    const lfo = this.ctx.createOscillator();
-    lfo.frequency.value = 0.13;
-    const lfoGain = this.ctx.createGain();
-    lfoGain.gain.value = 0.018;
-    lfo.connect(lfoGain).connect(this.crowdGain.gain);
-
-    src.connect(bp).connect(this.crowdGain).connect(this.master);
-    src.start();
-    lfo.start();
+    // wide low murmur L/R + airy top layer: reads as a full bowl, not a hiss
+    this.crowdGain = layer(700, 0.5, this._crowdBase, 0, 0.13, 0.018);
+    layer(420, 0.6, 0.035, -0.45, 0.09, 0.012);
+    layer(460, 0.6, 0.035, 0.45, 0.11, 0.012);
+    layer(1900, 0.8, 0.016, 0, 0.07, 0.007);
 
     // occasional random swells so the crowd feels alive
     const swellLoop = () => {
@@ -69,6 +85,49 @@ export class AudioEngine {
       setTimeout(() => { this.swell(0.03 + Math.random() * 0.03, 1.5); swellLoop(); }, 6000 + Math.random() * 14000);
     };
     swellLoop();
+    // distant terrace chants every so often
+    const chantLoop = () => {
+      if (!this.ctx) return;
+      setTimeout(() => { this._chant(); chantLoop(); }, 17000 + Math.random() * 26000);
+    };
+    chantLoop();
+  }
+
+  // rhythmic clap/chant pattern from one end of the ground
+  _chant() {
+    if (!this.ctx || this.muted) return;
+    const t0 = this.ctx.currentTime;
+    const beats = [0, 0.32, 0.64, 1.06, 1.38, 1.7, 2.12, 2.44, 2.76];
+    const pan = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
+    if (pan) { pan.pan.value = Math.random() < 0.5 ? -0.6 : 0.6; pan.connect(this.crowdBus ?? this.master); }
+    for (const b of beats) {
+      const src = this.ctx.createBufferSource();
+      src.buffer = this._noiseBuffer(0.12);
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = 950; bp.Q.value = 1.4;
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0 + b);
+      g.gain.exponentialRampToValueAtTime(0.05, t0 + b + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + b + 0.16);
+      src.connect(bp).connect(g).connect(pan ?? this.crowdBus ?? this.master);
+      src.start(t0 + b); src.stop(t0 + b + 0.2);
+    }
+  }
+
+  _bed() { return this._crowdBase * (1 + this._tension * 1.3); }
+
+  // ball entering an attacking third lifts the whole bed; called from the game loop
+  setTension(k) {
+    if (!this.crowdGain) return;
+    if (Math.abs(k - this._tension) < 0.04) return;
+    this._tension = k;
+    this.crowdGain.gain.setTargetAtTime(this._bed(), this.ctx.currentTime, 0.9);
+  }
+
+  // commentary ducking: 0.3 = commentator talking, 1 = crowd front and center
+  duckCrowd(mult) {
+    this._duck = mult;
+    if (this.crowdBus) this.crowdBus.gain.setTargetAtTime(mult, this.ctx.currentTime, 0.25);
   }
 
   // crowd rises: amount 0..0.3, seconds to decay back
@@ -77,8 +136,8 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     const g = this.crowdGain.gain;
     g.cancelScheduledValues(t);
-    g.setTargetAtTime(0.05 + amount, t, 0.12);
-    g.setTargetAtTime(0.05, t + 0.4, decay);
+    g.setTargetAtTime(this._bed() + amount, t, 0.12);
+    g.setTargetAtTime(this._bed(), t + 0.4, decay);
   }
 
   roar() {
@@ -94,7 +153,7 @@ export class AudioEngine {
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.14, t + 0.25);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 3);
-    src.connect(bp).connect(g).connect(this.master);
+    src.connect(bp).connect(g).connect(this.crowdBus ?? this.master);
     src.start();
     src.stop(t + 3.1);
   }

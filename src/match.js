@@ -93,7 +93,7 @@ export class Match {
     const team = {
       def, dir, diff, key, kit: kit ?? def, players: [],
       style: lineup.style, baseStyle: { ...lineup.style }, kickerIdx: lineup.kicker,
-      mood: 0, moodRegime: 'level',
+      mood: 0, moodRegime: 'level', buildupT: 0,
       adapt: { shiftZ: 0, closeDown: 0, lineDrop: 0, wideDeep: 0, tackleBoost: 0 },
       policyNet: null,
     };
@@ -102,7 +102,7 @@ export class Match {
       const isGK = slot.role === 'GK';
       const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
       const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-      const rig = buildRig(kit ?? def, skin, isGK, { number: entry[0], captain: i === 6 });
+      const rig = buildRig(kit ?? def, skin, isGK, { number: entry[0], captain: i === 6, name: entry[1] });
       this.scene.add(rig.group);
       team.players.push({
         team, idx: i, role: slot.role, isGK, isHuman: false, seatKey: null,
@@ -715,6 +715,24 @@ export class Match {
         const max = (p.isGK ? 5.2 : PLAYER.speed * p.team.diff.speed) * p.urgency;
         const want = Math.min(max, d * 3);
         if (d > 0.05) _v.multiplyScalar(want / d); else _v.set(0, 0, 0);
+        // anti-clump: ease away from teammates on the same grass
+        // (full-urgency chasers and the carrier are exempt — they must converge)
+        if (!p.isGK && p.urgency < 1 && owner !== p) {
+          let sx = 0, sz = 0;
+          for (const q of p.team.players) {
+            if (q === p || q.isGK) continue;
+            const dx = p.pos.x - q.pos.x, dz = p.pos.z - q.pos.z;
+            const d2 = dx * dx + dz * dz;
+            if (d2 < 9 && d2 > 1e-4) {
+              const dd = Math.sqrt(d2);
+              const f = (3 - dd) / 3;
+              sx += (dx / dd) * f;
+              sz += (dz / dd) * f;
+            }
+          }
+          _v.x += sx * 2.6;
+          _v.z += sz * 2.6;
+        }
         p.vel.lerp(_v, damp(7, dt));
       }
 
@@ -879,6 +897,7 @@ export class Match {
           const ang = Math.atan2(tz - h.pos.z, tx - h.pos.x);
           this.kickBall(h, Math.cos(ang) * sp, 0, Math.sin(ang) * sp, null);
           ball.intendedReceiver = mate;
+          h.team.buildupT = 2.2; // teammates surge after the release
           scout?.note('pass');
           break;
         }
@@ -887,31 +906,41 @@ export class Match {
           if (dBall > PLAYER.kickRange || ball.pos.y > 1.5 || h.kickCd > 0) break;
           const mate = this._passTargetFor(h, input, 6, 45, true, e.aim);
           if (!mate) break;
-          const lead = 5 + 7 * e.power;
+          const lead = (e.loft ? 7 : 5) + (e.loft ? 9 : 7) * e.power;
           const tx = mate.pos.x + h.team.dir * lead + mate.vel.x * 0.4;
           const tz = mate.pos.z * 0.96 + mate.vel.z * 0.4;
           const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
-          const sp = clamp(9 + d * 0.85 + 5 * e.power, 12, 26);
-          const ang = Math.atan2(tz - h.pos.z, tx - h.pos.x);
-          const vx = Math.cos(ang) * sp, vz = Math.sin(ang) * sp;
-          this.kickBall(h, vx, 0, vz, latSpin(vx, vz, 4));
+          if (e.loft) {
+            // over the top: floated ball with backspin that sits down for the runner
+            const T = clamp(d / 16, 0.55, 1.3);
+            const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
+            this.kickBall(h, vx, (BALL.g * T) / 2, vz, latSpin(vx, vz, -5));
+          } else {
+            const sp = clamp(9 + d * 0.85 + 5 * e.power, 12, 26);
+            const ang = Math.atan2(tz - h.pos.z, tx - h.pos.x);
+            const vx = Math.cos(ang) * sp, vz = Math.sin(ang) * sp;
+            this.kickBall(h, vx, 0, vz, latSpin(vx, vz, 4));
+          }
           ball.intendedReceiver = mate;
+          h.team.buildupT = 2.2; // teammates surge after the release
           scout?.note('through');
           break;
         }
 
         case 'chip': {
           if (dBall > PLAYER.kickRange || ball.pos.y > 1.5 || h.kickCd > 0) break;
-          const mate = this._passTargetFor(h, input, 10, 42, true, e.aim);
+          const pw = e.power ?? 0.5; // held L = longer, flatter lob
+          const mate = this._passTargetFor(h, input, 8, 16 + 30 * pw, true, e.aim);
           let tx, tz;
           if (mate) { tx = mate.pos.x + mate.vel.x * 0.6; tz = mate.pos.z + mate.vel.z * 0.6; }
           else if (e.aim) { tx = e.aim.x; tz = e.aim.z; }
           else { tx = goalX - h.team.dir * 8; tz = rand(-5, 5); }
           const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
-          const T = clamp(d / 15, 0.6, 1.55);
+          const T = clamp(d / (12 + 7 * pw), 0.6, 1.55);
           const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
           this.kickBall(h, vx, (BALL.g * T) / 2, vz, latSpin(vx, vz, -5.5));
           if (mate) ball.intendedReceiver = mate;
+          h.team.buildupT = 2.2;
           // wide chips into the box register as crosses
           if (Math.abs(h.pos.z) > FIELD.halfW * 0.45 && (goalX - h.pos.x) * h.team.dir < FIELD.halfL * 0.65) {
             scout?.note('cross');
