@@ -35,26 +35,66 @@ const NO_ADAPT = { shiftZ: 0, closeDown: 0, lineDrop: 0, wideDeep: 0, tackleBoos
 const _in = new Float64Array(16);
 const _out = new Float64Array(2);
 
+// --- world snapshot -----------------------------------------------------------
+// The reusable spatial facts every decision reads, computed once per tick
+// instead of re-scanned inside nested candidate loops. `facts` covers every
+// player (GKs included, matching the old per-site scans); per-team entries
+// hold the defensive line, carrier pressure, and current assignment counts.
+export function buildWorld(match) {
+  const ball = match.ball;
+  const all = [...match.teamA.players, ...match.teamB.players];
+  const facts = new Map(); // player → { opp, oppD, mate, mateD }
+  for (const p of all) facts.set(p, { opp: null, oppD: 1e9, mate: null, mateD: 1e9 });
+  for (let i = 0; i < all.length; i++) {
+    const a = all[i], fa = facts.get(a);
+    for (let j = i + 1; j < all.length; j++) {
+      const b = all[j], fb = facts.get(b);
+      const d = distXZ(a.pos, b.pos);
+      if (a.team === b.team) {
+        if (d < fa.mateD) { fa.mateD = d; fa.mate = b; }
+        if (d < fb.mateD) { fb.mateD = d; fb.mate = a; }
+      } else {
+        if (d < fa.oppD) { fa.oppD = d; fa.opp = b; }
+        if (d < fb.oppD) { fb.oppD = d; fb.opp = a; }
+      }
+    }
+  }
+  const K = FIELD.halfL / 52.5;
+  const teams = new Map();
+  for (const team of [match.teamA, match.teamB]) {
+    const opp = match.otherTeam(team);
+    let oppLine = -1e9; // opponents' last outfield defender, in our attacking coords
+    for (const o of opp.players) if (!o.isGK) oppLine = Math.max(oppLine, o.pos.x * team.dir);
+    let pressers = 0, runners = 0, nearBall = null, nearBallD = 1e9, ballCrowd = 0;
+    for (const p of team.players) {
+      if (p.act === 'press' || p.act === 'chase') pressers++;
+      else if (p.act === 'runBehind') runners++;
+      if (p.isGK) continue;
+      if (distXZ(p.pos, ball.pos) < 6 * K) ballCrowd++;
+      if (p.isHuman) continue;
+      const d = distXZ(p.pos, ball.pos);
+      if (d < nearBallD) { nearBallD = d; nearBall = p; }
+    }
+    const carrier = ball.owner;
+    teams.set(team, {
+      oppLine, pressers, runners, nearBall, nearBallD, ballCrowd,
+      press: carrier && carrier.team === team ? facts.get(carrier).oppD : 1e9,
+    });
+  }
+  return { facts, teams };
+}
+
 export function updateBrains(match, dt) {
   const ball = match.ball;
   const K = FIELD.halfL / 52.5;
-
-  // per-team nearest outfield AI to the ball (the guaranteed hunter)
-  const nearest = new Map();
-  for (const team of [match.teamA, match.teamB]) {
-    let best = null, bestD = 1e9;
-    for (const p of team.players) {
-      if (p.isGK || p.isHuman) continue;
-      const d = distXZ(p.pos, ball.pos);
-      if (d < bestD) { best = p; bestD = d; }
-    }
-    nearest.set(team, { best, bestD });
-  }
+  const world = buildWorld(match);
+  match._world = world; // decideOnBall (called from the control step) reads it too
 
   for (const team of [match.teamA, match.teamB]) {
     if (team.buildupT > 0) team.buildupT -= dt; // post-pass surge window (human release)
     const style = team.style, adapt = team.adapt ?? NO_ADAPT, diff = team.diff;
     const opp = match.otherTeam(team);
+    const tw = world.teams.get(team);
     const attacking = match.controllerTeam === team;
     const defending = !!match.controllerTeam && !attacking;
     const trans = match.transT < 2.5;
@@ -65,16 +105,8 @@ export function updateBrains(match, dt) {
     const ownGoalX = -goalX;
     const ballLX = ball.pos.x * dir;      // ball x in attacking coords
 
-    // opponents' last outfield defender (for runs in behind)
-    let oppLine = -1e9;
-    for (const o of opp.players) if (!o.isGK) oppLine = Math.max(oppLine, o.pos.x * dir);
-
-    // current assignment counts (for caps)
-    let pressers = 0, runners = 0;
-    for (const p of team.players) {
-      if (p.act === 'press' || p.act === 'chase') pressers++;
-      else if (p.act === 'runBehind') runners++;
-    }
+    const oppLine = tw.oppLine;
+    const pressers = tw.pressers, runners = tw.runners;
     const mood = team.mood ?? 0;
     const maxPress = 1 + Math.round(style.press * 2 + adapt.closeDown);
     const maxRun = (style.chemistry > 0.8 ? 3 : 2) + (mood > 0.5 ? 1 : 0);
@@ -94,7 +126,7 @@ export function updateBrains(match, dt) {
 
       // --- hard rules ------------------------------------------------------
       if (ball.owner === p) { // carry: drive at goal, veer off the nearest defender
-        dribbleMove(match, p, dir, K, style);
+        dribbleMove(match, p, dir, K, style, world.facts.get(p));
         p.act = 'dribble';
         p.urgency = URGENCY.dribble;
         continue;
@@ -104,9 +136,8 @@ export function updateBrains(match, dt) {
         p.act = 'intercept'; p.urgency = 1;
         continue;
       }
-      const near = nearest.get(team);
       const looseBall = !ball.owner && !ball.heldBy;
-      if (p === near.best && (looseBall || defending)) {
+      if (p === tw.nearBall && (looseBall || defending)) {
         interceptPoint(ball, p, PLAYER.speed * diff.speed, p.target);
         p.act = 'chase'; p.urgency = 1;
         continue;
@@ -294,10 +325,7 @@ export function updateBrains(match, dt) {
       } else if (looseBall) {
         // second body toward a loose ball — but not a whole herd
         if (dBall < 20 * K) {
-          let herd = 0;
-          for (const m2 of team.players) {
-            if (m2 !== p && !m2.isGK && distXZ(m2.pos, ball.pos) < 6 * K) herd++;
-          }
+          const herd = tw.ballCrowd - (dBall < 6 * K ? 1 : 0);
           cands.push({ act: 'chase2', tx: ball.pos.x, tz: ball.pos.z, s: 8 - dBall * 0.3 - herd * 2.2 });
         }
       }
@@ -317,7 +345,7 @@ export function updateBrains(match, dt) {
       // learned micro-positioning: tiny clamped offset on soft assignments
       if (team.policyNet && (best.act === 'anchor' || best.act === 'support'
           || best.act === 'holdWidth' || best.act === 'cover')) {
-        policyInputs(match, team, p, attacking, defending, tx, tz);
+        policyInputs(match, team, p, attacking, defending, tx, tz, world.facts.get(p));
         runNet(team.policyNet, _in, _out);
         tx += _out[0] * dir;
         tz += _out[1];
@@ -330,12 +358,9 @@ export function updateBrains(match, dt) {
   }
 }
 
-function dribbleMove(match, p, dir, K, style) {
-  let nd = 1e9, nearestO = null;
-  for (const o of match.opponentsOf(p.team)) {
-    const d = distXZ(o.pos, p.pos);
-    if (d < nd) { nd = d; nearestO = o; }
-  }
+function dribbleMove(match, p, dir, K, style, f) {
+  const nearestO = f?.opp ?? null;
+  const nd = f?.oppD ?? 1e9;
   let veer = 0;
   if (nearestO && nd < 6) {
     veer = (Math.sign(p.pos.z - nearestO.pos.z) || (Math.random() < 0.5 ? 1 : -1))
@@ -349,18 +374,11 @@ function dribbleMove(match, p, dir, K, style) {
   );
 }
 
-function policyInputs(match, team, p, attacking, defending, tx, tz) {
+function policyInputs(match, team, p, attacking, defending, tx, tz, f) {
   const ball = match.ball, dir = team.dir;
-  let od = 1e9, ox = 0, oz = 0, md = 1e9, mx = 0, mz = 0;
-  for (const o of match.opponentsOf(team)) {
-    const d = distXZ(o.pos, p.pos);
-    if (d < od) { od = d; ox = o.pos.x - p.pos.x; oz = o.pos.z - p.pos.z; }
-  }
-  for (const m of team.players) {
-    if (m === p) continue;
-    const d = distXZ(m.pos, p.pos);
-    if (d < md) { md = d; mx = m.pos.x - p.pos.x; mz = m.pos.z - p.pos.z; }
-  }
+  let ox = 0, oz = 0, mx = 0, mz = 0;
+  if (f?.opp) { ox = f.opp.pos.x - p.pos.x; oz = f.opp.pos.z - p.pos.z; }
+  if (f?.mate) { mx = f.mate.pos.x - p.pos.x; mz = f.mate.pos.z - p.pos.z; }
   _in[0] = p.pos.x * dir / FIELD.halfL;
   _in[1] = p.pos.z / FIELD.halfW;
   _in[2] = (ball.pos.x - p.pos.x) * dir / 20;
@@ -386,9 +404,9 @@ export function decideOnBall(match, p) {
   const goalX = dir * FIELD.halfL;
   const dGoal = Math.hypot(goalX - p.pos.x, p.pos.z);
   const ballLX = p.pos.x * dir;
+  const facts = match._world?.facts;
 
-  let press = 1e9;
-  for (const o of match.opponentsOf(team)) press = Math.min(press, distXZ(o.pos, p.pos));
+  const press = facts?.get(p)?.oppD ?? 1e9;
 
   const acts = [];
 
@@ -412,8 +430,7 @@ export function decideOnBall(match, p) {
     const d = distXZ(mate.pos, p.pos);
     if (d < 4 * K || d > 34) continue;
     const progress = (mate.pos.x - p.pos.x) * dir;
-    let open = 1e9;
-    for (const o of match.opponentsOf(team)) open = Math.min(open, distXZ(o.pos, mate.pos));
+    const open = facts?.get(mate)?.oppD ?? 1e9;
     const blocked = d < 15 && laneBlocked(match, p, mate.pos.x, mate.pos.z);
     let s = progress * (1.0 + style.directness * 1.2) / K + Math.min(open, 8) * 1.3 - d * 0.2 - (blocked ? 12 : 0)
       + style.chemistry * 2 + (mate.isHuman ? 4 : 0);
@@ -440,8 +457,7 @@ export function decideOnBall(match, p) {
       if (Math.abs(mate.pos.z - p.pos.z) < FIELD.halfW * 0.75) continue;
       const progress = (mate.pos.x - p.pos.x) * dir;
       if (progress < -8 * K) continue;
-      let open = 1e9;
-      for (const o of match.opponentsOf(team)) open = Math.min(open, distXZ(o.pos, mate.pos));
+      const open = facts?.get(mate)?.oppD ?? 1e9;
       const s = Math.min(open, 10) * 0.9 + progress * 0.15 + style.width * 2;
       if (s > swS) { swS = s; swMate = mate; }
     }
