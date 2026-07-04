@@ -1,6 +1,6 @@
 # BhatBall ⚽
 
-A pastel, FIFA-style 11v11 soccer game that runs entirely in your web browser — real ball physics, utility-based AI that adapts to how you play, 16 national teams with authentic formations and play styles, set pieces, skill moves, and a knockout cup.
+A FIFA-style 11v11 soccer game that runs entirely in your web browser — real ball physics, utility-based AI that adapts to how you play, several national teams with authentic formations and play styles, set pieces, skill moves, and a knockout cup.
 
 Built with Three.js. No installs, no accounts, no downloads.
 
@@ -8,7 +8,7 @@ Built with Three.js. No installs, no accounts, no downloads.
 
 **https://sbhat2026.github.io/BhatBall/**
 
-Open that link in Safari, Chrome, or any modern browser and press **Kick Off**. That's it — it works on school Macs (or any locked-down computer) because nothing gets downloaded or installed.
+Open that link and press **Kick Off**.
 
 ## 🎮 How to play (single player)
 
@@ -32,7 +32,6 @@ Pick your team, an opponent (or 🎲 Random), a stadium, difficulty, and match l
 | **M** | Mute |
 
 - **Save & resume** — pause mid-match and choose *Save & return to menu*; the Resume button brings it back later.
-- **Teams play like themselves** — Spain keeps the ball, France counters hard, Croatia sits solid, Brazil brings the flair. The opposing AI also quietly studies your habits during a match and adjusts.
 - **Difficulties** — Chill, Classic, Legend.
 
 ## 💻 Running it locally on a Mac (optional)
@@ -46,8 +45,6 @@ python3 -m http.server 8000
 ```
 
 Then open **http://localhost:8000** in your browser. (`python3` is preinstalled on macOS — no downloads. Any static file server works; Node.js is *not* required.)
-
-> Don't have git on the school Mac? Use GitHub's green **Code → Download ZIP** button instead, unzip it, and run the same `python3` command inside the folder.
 
 ## 🌐 Multiplayer
 
