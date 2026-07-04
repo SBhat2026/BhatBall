@@ -90,6 +90,13 @@ export function gkUpdate(match, gk, dt) {
   const reach = 1.1 + (towardGoal ? 0.7 : 0);
   if (!ball.owner && dBall < reach && ball.pos.y < 2.3 && gk.kickCd <= 0) {
     const sp = ball.speed();
+    // quick balls at full stretch get a proper dive (lateral side via heading × toBall)
+    if (gk.rig && (sp > 9 || dBall > 0.9)) {
+      gk.rig.diveT = 0.62;
+      gk.rig.diveDir = Math.sign(
+        gk.heading.x * (ball.pos.z - gk.pos.z) - gk.heading.z * (ball.pos.x - gk.pos.x),
+      ) || 1;
+    }
     // pace and a full stretch make saves miss-able
     const stretch = dBall > 1.1 ? 0.3 : 0;
     const pSave = clamp(0.95 - Math.max(0, sp - 12) * 0.032 - stretch, 0.2, 0.95);

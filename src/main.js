@@ -13,6 +13,7 @@ import { Match } from './match.js';
 import { GameCamera } from './camera.js';
 import { AudioEngine } from './audio.js';
 import { Net, RemoteInput, encodeSnapshot, rigFx } from './net.js';
+import { BALL_STYLES, getWins, addWin, isUnlocked, currentBallId, setBallId, previewURL } from './balls.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
 import { animateRig } from './rig.js';
@@ -51,6 +52,42 @@ function makeComposer(scene, preset) {
 
 const input = new Input();
 const audio = new AudioEngine();
+
+// mouse → pitch-plane aim point (fills input.aim for pass/shot targeting)
+const aimRaycaster = new THREE.Raycaster();
+const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const aimVec = new THREE.Vector3();
+function updateAim() {
+  if (!input.mouse.active) return;
+  aimRaycaster.setFromCamera(input.mouse, camera);
+  if (aimRaycaster.ray.intersectPlane(aimPlane, aimVec)) {
+    input.aim = { x: aimVec.x, z: aimVec.z };
+  }
+}
+
+function makeReticle(scene) {
+  const grp = new THREE.Group();
+  const m = new THREE.MeshBasicMaterial({
+    color: '#ffffff', transparent: true, opacity: 0.6, side: THREE.DoubleSide, depthWrite: false,
+  });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.47, 24), m);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.03;
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.09, 12), m);
+  dot.rotation.x = -Math.PI / 2;
+  dot.position.y = 0.03;
+  grp.add(ring, dot);
+  grp.visible = false;
+  scene.add(grp);
+  return grp;
+}
+
+// show the aim ring while charging a mouse-aimed action
+function updateReticle(g) {
+  const aim = input.charging ? input.aimPoint() : null;
+  g.reticle.visible = !!aim;
+  if (aim) g.reticle.position.set(aim.x, 0, aim.z);
+}
 
 // --- dev mode (invisible adaptation feed) -----------------------------------
 
@@ -91,6 +128,7 @@ function $(id) { return document.getElementById(id); }
 const sel = {
   teamA: 0, teamB: 'random', stadium: 'day', diff: 'classic', len: 5,
   neural: localStorage.getItem('pp-neural') !== '0',
+  ball: currentBallId(),
 };
 
 const chipHTML = (t) => `<span class="sw" style="background:${t.shirt}; --sw2:${t.sleeve}"></span>${t.code}`;
@@ -140,6 +178,38 @@ $('neuralChip').onclick = () => {
   refresh();
 };
 
+// match-ball rack: famous balls unlock with career wins vs the AI
+function renderBallChips() {
+  const box = $('balls');
+  box.innerHTML = '';
+  const wins = getWins();
+  for (const s of BALL_STYLES) {
+    const el = document.createElement('div');
+    el.className = 'chip';
+    const open = isUnlocked(s);
+    if (open) {
+      el.innerHTML = `<img src="${previewURL(s)}" style="width:18px;height:18px;border-radius:50%;" />${s.name}`;
+      el.title = s.note;
+      el.onclick = () => { sel.ball = s.id; setBallId(s.id); refresh(); };
+      el.classList.toggle('sel', sel.ball === s.id);
+    } else {
+      el.innerHTML = `🔒 ${s.name} <span style="color:#9aa2b1;font-weight:600;">· ${s.wins} wins</span>`;
+      el.style.opacity = 0.55;
+      el.style.cursor = 'default';
+      el.title = s.note;
+    }
+    box.appendChild(el);
+  }
+  $('winCount').textContent = `${wins} career win${wins === 1 ? '' : 's'} vs the AI`;
+}
+
+// count a single-player / World Cup win and surface any fresh unlocks
+function recordAIWin() {
+  const fresh = addWin();
+  renderBallChips();
+  return fresh.length ? `🔓 New ball unlocked: ${fresh.map((s) => s.name).join(', ')}!` : null;
+}
+
 function teamStyleBlurb(i) {
   const t = TEAMS[i];
   const tt = TEAM_TACTICS[t.code];
@@ -155,6 +225,7 @@ function refresh() {
   [...$('lens').children].forEach((el) => el.classList.toggle('sel', +el.dataset.id === sel.len));
   $('neuralChip').classList.toggle('sel', sel.neural);
   $('neuralChip').style.display = TRAINED_NET ? '' : 'none';
+  renderBallChips();
   $('btnResume').style.display = localStorage.getItem('pp-save') ? '' : 'none';
   $('btnWC').textContent = localStorage.getItem('pp-wc') ? '🏆 World Cup · continue' : '🏆 World Cup';
   $('styleNote').textContent = teamStyleBlurb(sel.teamA);
@@ -237,7 +308,8 @@ function buildScene(stadiumId) {
   const sfx = buildStadium(scene, preset);
   const confetti = new Confetti(scene);
   const cam = new GameCamera(camera);
-  return { scene, sfx, confetti, cam, composer: makeComposer(scene, preset), preset };
+  const reticle = makeReticle(scene);
+  return { scene, sfx, confetti, cam, reticle, composer: makeComposer(scene, preset), preset };
 }
 
 // --- goal replays (single-player): goal cam → player cam → cinematic ---------
@@ -293,7 +365,7 @@ function endReplay(g) {
     p.pos.set(s.x, 0, s.z); // pos aliases rig.group.position
     rig.group.rotation.set(0, s.ry, 0);
     rig.bicycleT = rig.slideT = rig.flickT = rig.finesseT = 0;
-    rig.kickT = rig.chipT = rig.throwT = 0;
+    rig.kickT = rig.chipT = rig.throwT = rig.diveT = 0;
     rig.holdBall = false;
   }
   g.match.ball.mesh.position.copy(g.match.ball.pos);
@@ -339,6 +411,7 @@ function stepReplay(g, dt) {
     if ((fx & 16) && !(r.fxPrev[k] & 16)) rig.throwT = 0.45;
     if ((fx & 32) && !(r.fxPrev[k] & 32)) rig.kickT = 0.32;
     if ((fx & 64) && !(r.fxPrev[k] & 64)) rig.chipT = 0.4;
+    if ((fx & 256) && !(r.fxPrev[k] & 256)) { rig.diveT = 0.62; rig.diveDir = (fx & 512) ? 1 : -1; }
     rig.holdBall = !!(fx & 128);
     r.fxPrev[k] = fx;
     animateRig(rig, a[3] + (b[3] - a[3]) * q, dt * st.rate);
@@ -400,6 +473,7 @@ function startHostedMatch(cfg) {
 
   const match = new Match(base.scene, {
     teamADef, teamBDef, kits,
+    ballStyle: sel.ball,
     diffKey: cfg.diffKey,
     lengthMin: cfg.len,
     halves: cfg.len === 5 ? 1 : 2,
@@ -478,8 +552,13 @@ function startSP(restore = null, sizeKey = '11') {
       const a = m.scoreA, b = m.scoreB;
       $('endTitle').textContent = 'FULL-TIME';
       $('endScore').textContent = `${m.teamA.def.code} ${a} – ${b} ${m.teamB.def.code}`;
-      $('endNote').textContent = a === b ? 'A draw — honors shared.'
+      let note = a === b ? 'A draw — honors shared.'
         : (a > b ? `${m.teamA.def.name} take it. Lovely stuff.` : `${m.teamB.def.name} edge it this time.`);
+      if (a > b) {
+        const unlock = recordAIWin();
+        if (unlock) note += `  ${unlock}`;
+      }
+      $('endNote').textContent = note;
       $('endscreen').classList.remove('hidden');
     },
   });
@@ -551,7 +630,12 @@ $('btnWCPlay').onclick = () => {
       advanceWC(wc, res);
       saveWC();
       const won = wc.champion === wc.my;
-      showBanner(won ? '🏆 WORLD CHAMPIONS!' : `FULL-TIME  ${m.scoreA} – ${m.scoreB}`, 2600);
+      let ft = won ? '🏆 WORLD CHAMPIONS!' : `FULL-TIME  ${m.scoreA} – ${m.scoreB}`;
+      if (m.scoreA > m.scoreB) {
+        const unlock = recordAIWin();
+        if (unlock) ft += `  ·  ${unlock}`;
+      }
+      showBanner(ft, 2600);
       if (won) { game.confetti.burst(0, 0); audio.roar(); }
       setTimeout(() => {
         game = null;
@@ -758,6 +842,7 @@ function startLanMatch(e1, e2, golden, onEnd) {
 
   castAll({
     k: 'fixture', mode: '11', a: e1.team, b: e2.team, stadium: sel.stadium, sides,
+    ball: sel.ball,
     label: `${e1.name} (${TEAMS[e1.team].code})  vs  ${e2.name} (${TEAMS[e2.team].code})`,
   });
 
@@ -823,6 +908,7 @@ function startStreetMatch(sizeKey) {
 
   castAll({
     k: 'fixture', mode: sizeKey, a, b, stadium: sel.stadium, sides,
+    ball: sel.ball,
     label: `${perSide}v${perSide} STREET · ${TEAMS[a].code} vs ${TEAMS[b].code}`,
   });
   startHostedMatch({
@@ -935,7 +1021,7 @@ function handleCast(d) {
       clientSide = d.sides[myId] ?? null;
       setField(clientFixture.mode);
       const base = buildScene(d.stadium);
-      clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientFixture.mode, String(myId));
+      clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientFixture.mode, String(myId), d.ball);
       game = { kind: 'client', ...base, view: clientView, sendT: 0, tabOpen: false, slow: -1, paused: false };
       setScoreboard(clientFixture.aDef.code, clientFixture.kits.a.shirt, clientFixture.bDef.code, clientFixture.kits.b.shirt);
       $('lobby').classList.add('hidden');
@@ -998,6 +1084,7 @@ function frame(now) {
 
   const events = input.takeEvents();
   if (!game) return;
+  updateAim();
 
   const gameplay = [];
   for (const e of events) {
@@ -1019,9 +1106,10 @@ function frame(now) {
       game.sendT -= dt;
       if (game.sendT <= 0 || gameplay.length) {
         game.sendT = 1 / 30;
-        net.sendInput({ a: input.moveDir(), s: input.sprinting(), e: gameplay });
+        net.sendInput({ a: input.moveDir(), s: input.sprinting(), e: gameplay, m: input.aimPoint() });
       }
     }
+    updateReticle(game);
     game.view.update(dt);
     game.confetti.update(dt);
     game.sfx.update(dt);
@@ -1071,6 +1159,7 @@ function frame(now) {
     }
 
     game.match.update(simDt, inputs, evmap);
+    updateReticle(game);
     game.rec?.tick(game.match, simDt);
     game.confetti.update(simDt);
     game.sfx.update(simDt);

@@ -36,7 +36,7 @@ export class Match {
     this.golden = false;
     this.sizeKey = opts.sizeKey ?? '11';
 
-    this.ball = new Ball(scene);
+    this.ball = new Ball(scene, opts.ballStyle);
     const kits = opts.kits ?? { a: opts.teamADef, b: opts.teamBDef };
     this.teamA = this._makeTeam(opts.teamADef, 1, MATE_DIFF, 'A', kits.a);
     this.teamB = this._makeTeam(opts.teamBDef, -1, DIFFICULTY[opts.diffKey], 'B', kits.b);
@@ -113,7 +113,7 @@ export class Match {
         vel: new THREE.Vector3(),
         heading: new THREE.Vector3(dir, 0, 0),
         target: new THREE.Vector3(),
-        urgency: 0.75, act: 'anchor', markT: null,
+        urgency: 0.75, act: 'anchor', markT: null, oneTwoT: 0,
         aiT: 0, kickCd: 0, touchCd: 0, ownerT: 0,
         tackleT: 0, stunT: 0, holdT: 0,
         lungeDir: new THREE.Vector3(),
@@ -178,7 +178,7 @@ export class Match {
         p.aiT = 0; p.kickCd = 0; p.touchCd = 0;
         p.tackleT = 0; p.stunT = 0; p.holdT = 0;
         p.rig.bicycleT = 0; p.rig.slideT = 0; p.rig.flickT = 0; p.rig.finesseT = 0;
-        p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.holdBall = false;
+        p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.diveT = 0; p.rig.holdBall = false;
         p.rig.group.rotation.set(0, Math.atan2(team.dir, 0), 0);
       }
     }
@@ -360,8 +360,8 @@ export class Match {
       const input = inputs[seatKey] ?? IDLE_INPUT;
       if (sp.kind === 'throwin') {
         for (const e of evts) {
-          if (e.type === 'pass') this._takeThrow(sp, input, false);
-          else if (e.type === 'through' || e.type === 'shoot' || e.type === 'chip') this._takeThrow(sp, input, true);
+          if (e.type === 'pass') this._takeThrow(sp, input, false, e.aim);
+          else if (e.type === 'through' || e.type === 'shoot' || e.type === 'chip') this._takeThrow(sp, input, true, e.aim);
         }
         return;
       }
@@ -370,7 +370,7 @@ export class Match {
       for (const e of evts) {
         if (e.type === 'pass' || e.type === 'through') this._takePass(sp, input, e);
         else if (e.type === 'chip') this._takeCross(sp);
-        else if (e.type === 'shoot' || e.type === 'finesse') this._takeShot(sp, input, e.power ?? 0.6, e.type === 'finesse');
+        else if (e.type === 'shoot' || e.type === 'finesse') this._takeShot(sp, input, e.power ?? 0.6, e.type === 'finesse', e.aim);
       }
     } else if (!seatKey || sp.t >= 9) {
       this._aiTake(sp);
@@ -378,9 +378,9 @@ export class Match {
   }
 
   // two-handed throw from the line: short to feet, or a long hurl down the wing
-  _takeThrow(sp, input, long = false) {
+  _takeThrow(sp, input, long = false, aim = null) {
     const h = sp.taker;
-    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 3, long ? 30 : 16, long);
+    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 3, long ? 30 : 16, long, aim);
     const infield = -Math.sign(h.pos.z) || 1;
     let tx, tz;
     if (mate) {
@@ -412,7 +412,7 @@ export class Match {
 
   _takePass(sp, input, e) {
     const h = sp.taker;
-    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 4, 40, e.type === 'through');
+    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 4, 40, e.type === 'through', e.aim);
     if (!mate) return;
     const d = distXZ(mate.pos, h.pos);
     const spd = clamp(7 + d * 0.9, 9, 24);
@@ -443,14 +443,15 @@ export class Match {
     this._resumeFromSetPiece(sp);
   }
 
-  _takeShot(sp, input, power, finesse) {
+  _takeShot(sp, input, power, finesse, aim = null) {
     const h = sp.taker;
     const goalX = sp.team.dir * FIELD.halfL;
     const dGoal = Math.hypot(goalX - h.pos.x, h.pos.z);
     const K = FIELD.halfL / 52.5;
     if (sp.kind === 'penalty') {
       const zCap = FIELD.goalHalf - 0.55;
-      const aimZ = clamp((input ?? IDLE_INPUT).moveDir().z * (zCap * 0.94), -zCap, zCap);
+      const aimZ = this._aimZAtGoal(h, aim, zCap)
+        ?? clamp((input ?? IDLE_INPUT).moveDir().z * (zCap * 0.94), -zCap, zCap);
       const spd = 19 + 5 * power;
       const err = power > 0.85 ? rand(-0.08, 0.08) : rand(-0.02, 0.02);
       const ang = Math.atan2(aimZ - h.pos.z, goalX - h.pos.x) + err;
@@ -463,7 +464,7 @@ export class Match {
       const side = Math.sign(h.pos.z || 1);
       const spin = new THREE.Vector3(0, (finesse ? 6 : 3.5) * side * sp.team.dir, 0);
       const spd = finesse ? 19.5 : 17 + 8 * power;
-      const aimZ = -side * FIELD.goalHalf * 0.66;
+      const aimZ = this._aimZAtGoal(h, aim, FIELD.goalHalf - 0.55) ?? -side * FIELD.goalHalf * 0.66;
       const ang = Math.atan2(aimZ - h.pos.z, goalX - h.pos.x) + rand(-0.03, 0.03);
       // enough lift to clear the wall
       this.kickBall(h, Math.cos(ang) * spd, spd * 0.15, Math.sin(ang) * spd, spin, false, true);
@@ -488,10 +489,18 @@ export class Match {
     } else this._takeCross(sp);
   }
 
-  _passTargetFor(h, input, minD, maxD, preferForward = false) {
-    const m = input.moveDir();
-    const aimX = (m.x || m.z) ? m.x : h.heading.x;
-    const aimZ = (m.x || m.z) ? m.z : h.heading.z;
+  // aim: optional {x,z} world point (mouse) — beats move-key direction when present
+  _passTargetFor(h, input, minD, maxD, preferForward = false, aim = null) {
+    let aimX, aimZ;
+    if (aim) {
+      aimX = aim.x - h.pos.x; aimZ = aim.z - h.pos.z;
+      const l = Math.hypot(aimX, aimZ) || 1;
+      aimX /= l; aimZ /= l;
+    } else {
+      const m = input.moveDir();
+      aimX = (m.x || m.z) ? m.x : h.heading.x;
+      aimZ = (m.x || m.z) ? m.z : h.heading.z;
+    }
     let best = null, bestScore = -1e9;
     for (const mate of h.team.players) {
       if (mate === h || mate.isGK) continue;
@@ -501,9 +510,20 @@ export class Match {
       const align = (dx * aimX + dz * aimZ) / d;
       const progress = dx * h.team.dir;
       let score = align * 8 - d * 0.12 + (preferForward ? progress * 0.4 : progress * 0.1);
+      if (aim) score -= Math.hypot(mate.pos.x - aim.x, mate.pos.z - aim.z) * 0.3;
       if (score > bestScore) { bestScore = score; best = mate; }
     }
     return best;
+  }
+
+  // where the aim ray from p crosses the goal line, clamped inside the mouth
+  _aimZAtGoal(p, aim, zCap) {
+    if (!aim) return null;
+    const goalX = p.team.dir * FIELD.halfL;
+    const dx = aim.x - p.pos.x;
+    if (dx * p.team.dir < 0.5) return clamp(aim.z, -zCap, zCap); // aiming sideways: use raw z
+    const t = (goalX - p.pos.x) / dx;
+    return clamp(p.pos.z + (aim.z - p.pos.z) * t, -zCap, zCap);
   }
 
   // --- main update --------------------------------------------------------
@@ -561,6 +581,12 @@ export class Match {
         if (sp > 0.6 || p.tackleT > 0) {
           const h = p.tackleT > 0 ? p.lungeDir : p.heading;
           p.rig.group.rotation.y = Math.atan2(h.x, h.z);
+        } else if (this.state === 'PLAY' && !p.rig.holdBall && p.rig.diveT <= 0) {
+          // standing players track the ball with their body
+          const ty = Math.atan2(this.ball.pos.x - p.pos.x, this.ball.pos.z - p.pos.z);
+          let d = ty - p.rig.group.rotation.y;
+          d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+          p.rig.group.rotation.y += d * Math.min(1, 3.5 * dt);
         }
       }
     }
@@ -843,7 +869,7 @@ export class Match {
 
         case 'pass': {
           if (dBall > PLAYER.kickRange || ball.pos.y > 1.5 || h.kickCd > 0) break;
-          const mate = this._passTargetFor(h, input, 4, 34);
+          const mate = this._passTargetFor(h, input, 4, 34, false, e.aim);
           if (!mate) break;
           const d = distXZ(mate.pos, h.pos);
           const sp = clamp(7 + d * 0.9, 9, 24);
@@ -859,7 +885,7 @@ export class Match {
 
         case 'through': {
           if (dBall > PLAYER.kickRange || ball.pos.y > 1.5 || h.kickCd > 0) break;
-          const mate = this._passTargetFor(h, input, 6, 45, true);
+          const mate = this._passTargetFor(h, input, 6, 45, true, e.aim);
           if (!mate) break;
           const lead = 5 + 7 * e.power;
           const tx = mate.pos.x + h.team.dir * lead + mate.vel.x * 0.4;
@@ -876,9 +902,10 @@ export class Match {
 
         case 'chip': {
           if (dBall > PLAYER.kickRange || ball.pos.y > 1.5 || h.kickCd > 0) break;
-          const mate = this._passTargetFor(h, input, 10, 42, true);
+          const mate = this._passTargetFor(h, input, 10, 42, true, e.aim);
           let tx, tz;
           if (mate) { tx = mate.pos.x + mate.vel.x * 0.6; tz = mate.pos.z + mate.vel.z * 0.6; }
+          else if (e.aim) { tx = e.aim.x; tz = e.aim.z; }
           else { tx = goalX - h.team.dir * 8; tz = rand(-5, 5); }
           const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
           const T = clamp(d / 15, 0.6, 1.55);
@@ -896,12 +923,14 @@ export class Match {
           if (h.kickCd > 0 || dBall > 1.9) break;
           const p = e.power;
           const dG = Math.hypot(goalX - h.pos.x, h.pos.z);
+          const zCap = FIELD.goalHalf - 0.55;
+          const aimZ = this._aimZAtGoal(h, e.aim, zCap);
           if (ball.pos.y > 0.75 && ball.pos.y < 2.3) {
-            this._shot(h, 18 + 10 * p, 0.05, 0.09, null);
+            this._shot(h, 18 + 10 * p, 0.05, 0.09, aimZ);
           } else if (ball.pos.y <= 0.75 && dBall <= PLAYER.kickRange) {
             const sp = 15 + 15 * p;
             const lift = sp * (0.05 + 0.11 * p);
-            this._shot(h, sp, lift / sp, 0.02 + 0.06 * p, input.moveDir().z * 3.0);
+            this._shot(h, sp, lift / sp, 0.02 + 0.06 * p, aimZ ?? input.moveDir().z * 3.0);
           } else break;
           scout?.note('shot');
           if (dG > FIELD.halfL * 0.42) scout?.note('longShot');
@@ -911,7 +940,7 @@ export class Match {
         case 'finesse': {
           if (h.kickCd > 0 || dBall > PLAYER.kickRange || ball.pos.y > 0.9) break;
           const side = Math.sign(h.pos.z || 1);
-          const aimZ = -side * FIELD.goalHalf * 0.7;
+          const aimZ = this._aimZAtGoal(h, e.aim, FIELD.goalHalf - 0.55) ?? -side * FIELD.goalHalf * 0.7;
           const spin = new THREE.Vector3(0, 5 * side * h.team.dir, 0);
           this._shot(h, 18.5 + 4 * e.power, 0.11, 0.015, aimZ, spin);
           h.rig.finesseT = 0.55;

@@ -1,18 +1,14 @@
 import * as THREE from 'three';
 import { FIELD, BALL } from './config.js';
+import { buildBallMesh } from './balls.js';
 
 const _a = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 export class Ball {
-  constructor(scene) {
-    const geo = new THREE.IcosahedronGeometry(BALL.r, 1);
-    const mat = new THREE.MeshStandardMaterial({
-      color: '#f7f5f0', roughness: 0.85, metalness: 0, flatShading: true,
-    });
-    this.mesh = new THREE.Mesh(geo, mat);
-    this.mesh.castShadow = true;
+  constructor(scene, styleId) {
+    this.mesh = buildBallMesh(styleId);
     scene.add(this.mesh);
 
     this.pos = new THREE.Vector3(0, BALL.r, 0);

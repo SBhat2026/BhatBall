@@ -4,9 +4,10 @@ import { BALL } from './config.js';
 import { SKIN_TONES, resolveKits } from './teams.js';
 import { buildRig, animateRig } from './rig.js';
 import { buildLineup } from './tactics.js';
+import { buildBallMesh } from './balls.js';
 
 export class NetView {
-  constructor(scene, teamADef, teamBDef, mode, myKey) {
+  constructor(scene, teamADef, teamBDef, mode, myKey, ballStyle) {
     this.scene = scene;
     this.myKey = myKey ?? null; // seat key ('H' or String(clientId)); null = spectator
     this.players = [];
@@ -34,11 +35,7 @@ export class NetView {
       if (def === teamADef) this.aCount = lineup.slots.length;
     }
 
-    this.ballMesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(BALL.r, 1),
-      new THREE.MeshStandardMaterial({ color: '#f7f5f0', roughness: 0.85, metalness: 0, flatShading: true }),
-    );
-    this.ballMesh.castShadow = true;
+    this.ballMesh = buildBallMesh(ballStyle);
     scene.add(this.ballMesh);
     this.ballCur = new THREE.Vector3(0, BALL.r, 0);
     this.ballTgt = new THREE.Vector3(0, BALL.r, 0);
@@ -84,6 +81,7 @@ export class NetView {
       if ((fx & 16) && !(p.fx & 16)) p.rig.throwT = 0.45;
       if ((fx & 32) && !(p.fx & 32)) p.rig.kickT = 0.32;
       if ((fx & 64) && !(p.fx & 64)) p.rig.chipT = 0.4;
+      if ((fx & 256) && !(p.fx & 256)) { p.rig.diveT = 0.62; p.rig.diveDir = (fx & 512) ? 1 : -1; }
       p.rig.holdBall = !!(fx & 128);
       p.fx = fx;
     }

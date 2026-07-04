@@ -151,12 +151,14 @@
     </div>
     <div id="powerwrap"><div id="powerbar"></div></div>
     <canvas id="minimap" width="220" height="150"></canvas>
-    <div id="hint">H controls · Tab switch player · C camera · P pause · M mute</div>
+    <div id="hint">H controls · mouse aims (L shoot · R pass) · Tab switch · C camera · P pause</div>
     <div id="playerChip" style="position:absolute;bottom:64px;left:22px;font-size:13px;font-weight:800;color:#fff;background:#4a4f5caa;backdrop-filter:blur(4px);padding:6px 12px;border-radius:10px;"></div>
     <div id="helpPanel" class="hidden">
       <h3>Controls</h3>
       <div><kbd>WASD / ↑↓←→</kbd> move &nbsp; <kbd>Shift</kbd> sprint</div>
       <div><kbd>J</kbd> tap = pass · hold = through ball &nbsp; <kbd>Space</kbd> shoot (hold = power)</div>
+      <div><kbd>🖱 Left</kbd> hold &amp; release = shoot at cursor &nbsp; <kbd>🖱 Right</kbd> tap = pass · hold = through</div>
+      <div>Move the mouse to aim — passes pick the teammate nearest your cursor</div>
       <div><kbd>I</kbd> finesse curl &nbsp; <kbd>L</kbd> chip / lob</div>
       <div><kbd>Q</kbd> sombrero flick &nbsp; <kbd>E</kbd> bicycle kick (ball in air)</div>
       <div><kbd>K</kbd> slide tackle &nbsp; <kbd>Tab</kbd> switch player</div>
@@ -182,6 +184,8 @@
       <div class="cardsRow" id="diffs"></div>
       <h2>Match length</h2>
       <div class="grid" id="lens"></div>
+      <h2>Match ball <span id="winCount" style="text-transform:none;letter-spacing:0;font-weight:600;"></span></h2>
+      <div class="grid" id="balls"></div>
       <div class="grid" style="margin-top:8px;"><div class="chip" id="neuralChip" style="display:none">🧠 Neural movement</div></div>
 
       <div class="btnRow">

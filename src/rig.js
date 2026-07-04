@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
-// Low-poly player: hex-cylinder torso, icosphere head, box limbs. Matte pastel materials.
+// Low-poly player: hex-cylinder torso, icosphere head, jointed box limbs
+// (hip/knee, shoulder/elbow). Matte pastel materials.
 // Kits can carry a torso pattern (Argentina stripes, Croatia checkers).
 
 const HAIR_COLORS = ['#2e2a28', '#4a3826', '#7a5a38', '#c9b18a', '#5a5f6b'];
@@ -33,18 +34,19 @@ function numberTexture(n, ink) {
 function kitTexture(base, pat, pat2) {
   const key = `${base}|${pat}|${pat2}`;
   if (kitTexCache.has(key)) return kitTexCache.get(key);
+  const S = 192;
   const cv = document.createElement('canvas');
-  cv.width = cv.height = 96;
+  cv.width = cv.height = S;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = base;
-  ctx.fillRect(0, 0, 96, 96);
+  ctx.fillRect(0, 0, S, S);
   ctx.fillStyle = pat2;
   if (pat === 'stripes') {
-    for (let x = 0; x < 96; x += 24) ctx.fillRect(x, 0, 12, 96);
+    for (let x = 0; x < S; x += S / 4) ctx.fillRect(x, 0, S / 8, S);
   } else if (pat === 'hoops') {
-    for (let y = 0; y < 96; y += 24) ctx.fillRect(0, y, 96, 12);
+    for (let y = 0; y < S; y += S / 4) ctx.fillRect(0, y, S, S / 8);
   } else if (pat === 'checkers') {
-    const s = 16;
+    const s = S / 6;
     for (let y = 0; y < 6; y++) for (let x = 0; x < 6; x++) {
       if ((x + y) % 2 === 0) ctx.fillRect(x * s, y * s, s, s);
     }
@@ -59,6 +61,7 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   const shirt = isGK ? kit.gk : kit.shirt;
   const sleeve = isGK ? kit.gk : kit.sleeve;
   const shorts = isGK ? '#5c6478' : kit.shorts;
+  const socks = isGK ? '#5c6478' : (kit.socks ?? kit.shorts);
   const canPaint = typeof document !== 'undefined';
 
   const mat = (c) => new THREE.MeshStandardMaterial({
@@ -81,6 +84,12 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   const torso = add(new THREE.CylinderGeometry(0.26, 0.32, 0.68, 6), torsoMat, 0, 1.12, 0);
   add(new THREE.CylinderGeometry(0.3, 0.3, 0.24, 6), mat(shorts), 0, 0.72, 0);
   add(new THREE.IcosahedronGeometry(0.22, 1), mat(skinTone), 0, 1.66, 0);
+
+  // small chest crest, trim-colored so the kit reads less flat
+  if (!isGK) {
+    const trim = kit.sleeve !== kit.shirt ? kit.sleeve : (kit.socks ?? kit.shorts);
+    add(new THREE.BoxGeometry(0.075, 0.085, 0.02), mat(trim), 0.12, 1.3, 0.245);
+  }
 
   // shirt number on the back (rig faces +z, so back is -z); ink flips on dark shirts
   if (opts.number != null && canPaint) {
@@ -105,26 +114,36 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   } else if (style === 4) add(new THREE.BoxGeometry(0.3, 0.12, 0.3), hairC, 0, 1.85, 0); // flat top
   // style 0: bald
 
-  const mkLimb = (x, y, w, len, color, footColor) => {
+  // two-segment limb: hip/shoulder pivot + knee/elbow pivot
+  const mkLimb = (x, y, w, upLen, loLen, upColor, loColor, footColor) => {
     const pivot = new THREE.Group();
     pivot.position.set(x, y, 0);
     g.add(pivot);
-    add(new THREE.BoxGeometry(w, len, w), mat(color), 0, -len / 2, 0, pivot);
-    if (footColor) add(new THREE.BoxGeometry(w + 0.03, 0.1, 0.27), mat(footColor), 0, -len - 0.04, 0.05, pivot);
+    add(new THREE.BoxGeometry(w, upLen, w), mat(upColor), 0, -upLen / 2, 0, pivot);
+    const joint = new THREE.Group();
+    joint.position.set(0, -upLen, 0);
+    pivot.add(joint);
+    add(new THREE.BoxGeometry(w * 0.92, loLen, w * 0.92), mat(loColor), 0, -loLen / 2, 0, joint);
+    if (footColor) add(new THREE.BoxGeometry(w + 0.03, 0.1, 0.27), mat(footColor), 0, -loLen - 0.04, 0.05, joint);
+    pivot.joint = joint;
     return pivot;
   };
 
-  const legL = mkLimb(-0.14, 0.62, 0.16, 0.58, skinTone, '#4a4f5c');
-  const legR = mkLimb(0.14, 0.62, 0.16, 0.58, skinTone, '#4a4f5c');
-  const armL = mkLimb(-0.38, 1.4, 0.12, 0.5, sleeve);
-  const armR = mkLimb(0.38, 1.4, 0.12, 0.5, sleeve);
+  // legs: skin thigh, sock shin, dark boot · arms: short sleeves (skin forearm), GK long sleeves
+  const legL = mkLimb(-0.14, 0.62, 0.16, 0.3, 0.28, skinTone, socks, '#4a4f5c');
+  const legR = mkLimb(0.14, 0.62, 0.16, 0.3, 0.28, skinTone, socks, '#4a4f5c');
+  const armL = mkLimb(-0.38, 1.4, 0.12, 0.27, 0.23, sleeve, isGK ? sleeve : skinTone);
+  const armR = mkLimb(0.38, 1.4, 0.12, 0.27, 0.23, sleeve, isGK ? sleeve : skinTone);
 
   if (opts.captain) add(new THREE.BoxGeometry(0.15, 0.09, 0.15), mat('#f0c890'), 0, -0.14, 0, armL);
 
   return {
     group: g, torso,
     legL, legR, armL, armR,
+    kneeL: legL.joint, kneeR: legR.joint,
+    elbL: armL.joint, elbR: armR.joint,
     phase: Math.random() * 6.28,
+    idleT: Math.random() * 6.28, // breathing / idle sway clock
     bicycleT: 0,  // 1.05s three-phase backflip
     slideT: 0,    // slide tackle
     flickT: 0,    // sombrero heel flick
@@ -132,6 +151,8 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
     kickT: 0,     // standard strike: plant + leg swings through
     chipT: 0,     // scooped lob: toe under the ball, lean back
     throwT: 0,    // throw-in release: arms whip overhead → forward
+    diveT: 0,     // GK dive; diveDir = ±1 lateral side
+    diveDir: 1,
     holdBall: false, // throw-in stance: ball held two-handed overhead
   };
 }
@@ -140,6 +161,7 @@ const TAU = Math.PI * 2;
 
 export function animateRig(rig, speed, dt) {
   const g = rig.group;
+  rig.idleT += dt;
 
   // --- bicycle kick: crouch -> backflip strike -> land & recover ---
   if (rig.bicycleT > 0) {
@@ -150,6 +172,7 @@ export function animateRig(rig, speed, dt) {
       g.rotation.x = -0.35 * q;
       g.position.y = -0.16 * q;
       rig.legL.rotation.x = 0.5 * q; rig.legR.rotation.x = 0.5 * q;
+      rig.kneeL.rotation.x = -0.9 * q; rig.kneeR.rotation.x = -0.9 * q;
       rig.armL.rotation.x = -1.2 * q; rig.armR.rotation.x = -1.2 * q;
     } else if (t < 0.55) {             // 2. launch, scissor, full backflip
       const q = (t - 0.15) / 0.4;
@@ -158,30 +181,52 @@ export function animateRig(rig, speed, dt) {
       const s = Math.sin(q * Math.PI);
       rig.legL.rotation.x = -2.3 * s;
       rig.legR.rotation.x = 1.7 * Math.sin(q * Math.PI + 0.6);
+      rig.kneeL.rotation.x = -0.4 * s; rig.kneeR.rotation.x = -0.7 * (1 - s);
       rig.armL.rotation.z = -1.1 * s; rig.armR.rotation.z = 1.1 * s;
     } else {                           // 3. land on the grass, roll up
       const q = (t - 0.55) / 0.5;
       g.rotation.x = -TAU - 0.3 * Math.sin(q * Math.PI) + TAU; // settle around 0 with a small rock
       g.position.y = -0.25 * (1 - q);
       rig.legL.rotation.x = -0.6 * (1 - q); rig.legR.rotation.x = 0.4 * (1 - q);
+      rig.kneeL.rotation.x = -0.5 * (1 - q); rig.kneeR.rotation.x = -0.5 * (1 - q);
       rig.armL.rotation.z = -0.5 * (1 - q); rig.armR.rotation.z = 0.5 * (1 - q);
       rig.armL.rotation.x = 0; rig.armR.rotation.x = 0;
     }
     return;
   }
 
-  // --- slide tackle: low lunge, arms out ---
+  // --- slide tackle: low lunge, trailing leg folded, arms out ---
   if (rig.slideT > 0) {
     rig.slideT = Math.max(0, rig.slideT - dt);
     g.rotation.x = -1.15;
     g.position.y = -0.35;
     rig.legL.rotation.x = -0.4; rig.legR.rotation.x = 0.9;
+    rig.kneeL.rotation.x = -1.2; rig.kneeR.rotation.x = -0.1;
     rig.armL.rotation.z = -1.2; rig.armR.rotation.z = 1.2;
     return;
   }
 
+  // --- GK dive: launch sideways, arms stretched, roll back up ---
+  if (rig.diveT > 0) {
+    rig.diveT = Math.max(0, rig.diveT - dt);
+    const q = 1 - rig.diveT / 0.62;
+    const s = Math.sin(q * Math.PI);           // out and back
+    const d = rig.diveDir || 1;
+    g.rotation.z = -d * 1.35 * s;
+    g.rotation.x = 0;
+    g.position.y = 0.28 * Math.sin(Math.min(1, q * 1.6) * Math.PI) - 0.22 * s;
+    rig.armL.rotation.z = d * 2.5 * s; rig.armR.rotation.z = d * 2.5 * s;
+    rig.armL.rotation.x = 0; rig.armR.rotation.x = 0;
+    rig.legL.rotation.x = 0.25 * s; rig.legR.rotation.x = -0.2 * s;
+    rig.kneeL.rotation.x = -0.5 * s; rig.kneeR.rotation.x = -0.3 * s;
+    if (rig.diveT <= 0) { g.rotation.z = 0; rig.armL.rotation.z = 0; rig.armR.rotation.z = 0; }
+    return;
+  }
+
   g.rotation.x = 0;
+  g.rotation.z = 0;
   g.position.y = 0;
+  rig.torso.rotation.x = 0;
   rig.armL.rotation.z = 0; rig.armR.rotation.z = 0;
 
   // --- throw-in release: arms whip from overhead to full follow-through ---
@@ -190,17 +235,24 @@ export function animateRig(rig, speed, dt) {
     const q = 1 - rig.throwT / 0.45;
     const arm = 3.0 - 3.7 * Math.min(1, q * 1.25); // overhead → out front
     rig.armL.rotation.x = arm; rig.armR.rotation.x = arm;
+    rig.elbL.rotation.x = 0.5 * (1 - q); rig.elbR.rotation.x = 0.5 * (1 - q);
     g.rotation.x = -0.14 + 0.3 * Math.sin(Math.min(1, q * 1.3) * Math.PI / 2); // arch → snap forward
     rig.legL.rotation.x = -0.2 * q; rig.legR.rotation.x = 0.25 * q;
-    if (rig.throwT <= 0) { rig.armL.rotation.x = 0; rig.armR.rotation.x = 0; g.rotation.x = 0; }
+    if (rig.throwT <= 0) {
+      rig.armL.rotation.x = 0; rig.armR.rotation.x = 0;
+      rig.elbL.rotation.x = 0; rig.elbR.rotation.x = 0;
+      g.rotation.x = 0;
+    }
     return;
   }
 
   // --- throw-in stance: both arms straight up holding the ball, slight arch ---
   if (rig.holdBall) {
     rig.armL.rotation.x = 3.0; rig.armR.rotation.x = 3.0;
+    rig.elbL.rotation.x = 0.4; rig.elbR.rotation.x = 0.4;
     g.rotation.x = -0.1;
     rig.legL.rotation.x = 0; rig.legR.rotation.x = 0;
+    rig.kneeL.rotation.x = 0; rig.kneeR.rotation.x = 0;
     return;
   }
 
@@ -211,6 +263,7 @@ export function animateRig(rig, speed, dt) {
     const s = Math.sin(q * Math.PI);
     g.position.y = 0.14 * s;
     rig.legR.rotation.x = 1.5 * s;        // heel snaps up behind
+    rig.kneeR.rotation.x = -1.6 * s;      // shin folds so the heel does the work
     rig.legL.rotation.x = -0.3 * s;
     rig.armL.rotation.x = -0.6 * s; rig.armR.rotation.x = -0.6 * s;
     return;
@@ -223,9 +276,12 @@ export function animateRig(rig, speed, dt) {
     const sweep = Math.sin(Math.min(q * 1.6, 1) * Math.PI);
     rig.legR.rotation.x = -0.9 + 2.1 * q;
     rig.legR.rotation.z = -0.5 * sweep;   // wraps across the body
+    rig.kneeR.rotation.x = -0.8 * (1 - q); // cocked, then extends through contact
+    rig.legL.rotation.x = -0.15;
+    rig.kneeL.rotation.x = -0.25;
     rig.armL.rotation.x = 0.8 * sweep; rig.armR.rotation.x = -0.8 * sweep;
     rig.torso.rotation.y = 0.4 * sweep;
-    if (rig.finesseT <= 0) { rig.legR.rotation.z = 0; rig.torso.rotation.y = 0; }
+    if (rig.finesseT <= 0) { rig.legR.rotation.z = 0; rig.torso.rotation.y = 0; rig.kneeR.rotation.x = 0; }
     return;
   }
 
@@ -235,36 +291,54 @@ export function animateRig(rig, speed, dt) {
     const q = 1 - rig.chipT / 0.4;
     const s = Math.sin(q * Math.PI);
     rig.legR.rotation.x = 0.5 - 1.7 * Math.min(1, q * 1.4); // short backswing, scoop through
+    rig.kneeR.rotation.x = -1.0 * (1 - Math.min(1, q * 1.4)); // folded, snaps straight for the scoop
     rig.legL.rotation.x = 0.12 * s;
     g.rotation.x = -0.14 * s;              // lean back
     rig.armL.rotation.x = -0.7 * s; rig.armR.rotation.x = 0.5 * s;
-    if (rig.chipT <= 0) g.rotation.x = 0;
+    if (rig.chipT <= 0) { g.rotation.x = 0; rig.kneeR.rotation.x = 0; }
     return;
   }
 
-  // --- standard kick: plant left, right leg winds back and drives through ---
+  // --- standard kick: plant left, right leg cocks at the knee and drives through ---
   if (rig.kickT > 0) {
     rig.kickT = Math.max(0, rig.kickT - dt);
     const q = 1 - rig.kickT / 0.32;
     rig.legR.rotation.x = 0.9 - 2.5 * q;   // + is backswing, − swings through
+    rig.kneeR.rotation.x = -1.3 * Math.max(0, 1 - q * 1.6); // folded in backswing, whips straight
     rig.legL.rotation.x = -0.15;
+    rig.kneeL.rotation.x = -0.2;           // plant leg soft at the knee
     rig.armL.rotation.x = -0.6 * Math.sin(q * Math.PI);
     rig.armR.rotation.x = 0.6 * Math.sin(q * Math.PI);
     g.rotation.x = 0.08 * Math.sin(q * Math.PI); // slight lean over the ball
-    if (rig.kickT <= 0) g.rotation.x = 0;
+    if (rig.kickT <= 0) { g.rotation.x = 0; rig.kneeR.rotation.x = 0; rig.kneeL.rotation.x = 0; }
     return;
   }
 
-  // --- run cycle ---
+  // --- run cycle: hip swing + knee fold on recovery, pumping bent arms, bob & lean ---
   rig.phase += Math.min(speed, 10) * dt * 1.55;
   const amp = Math.min(speed / 8, 1) * 0.85;
   const s = Math.sin(rig.phase);
   rig.legL.rotation.x = s * amp;
   rig.legR.rotation.x = -s * amp;
+  // knee folds as the leg swings forward under the body, near-straight at plant
+  rig.kneeL.rotation.x = -amp * 1.05 * Math.max(0, Math.sin(rig.phase - 1.9));
+  rig.kneeR.rotation.x = -amp * 1.05 * Math.max(0, Math.sin(rig.phase + Math.PI - 1.9));
   rig.armL.rotation.x = -s * amp * 0.7;
   rig.armR.rotation.x = s * amp * 0.7;
+  rig.elbL.rotation.x = amp * (0.85 + 0.2 * s);
+  rig.elbR.rotation.x = amp * (0.85 - 0.2 * s);
+  rig.torso.rotation.x = 0.16 * Math.min(speed / 8, 1);          // lean into the run
+  g.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * amp;    // stride bob
   if (speed < 0.3) {
+    // idle: soft breathing sway instead of frozen joints
+    const b = Math.sin(rig.idleT * 1.7);
     rig.legL.rotation.x *= 0.2; rig.legR.rotation.x *= 0.2;
-    rig.armL.rotation.x *= 0.2; rig.armR.rotation.x *= 0.2;
+    rig.kneeL.rotation.x = -0.06; rig.kneeR.rotation.x = -0.06;
+    rig.armL.rotation.x = -0.05 + 0.03 * b;
+    rig.armR.rotation.x = -0.05 + 0.03 * b;
+    rig.elbL.rotation.x = 0.22 + 0.04 * b;
+    rig.elbR.rotation.x = 0.22 + 0.04 * b;
+    rig.torso.rotation.x = 0.02 + 0.015 * b;
+    g.position.y = 0;
   }
 }

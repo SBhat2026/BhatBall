@@ -22,10 +22,11 @@ const W_COVER = { CB: 1.0, DM: 1.1, FB: 0.6, WB: 0.6, CM: 0.5 };
 const W_SUPPORT = { CM: 1.2, DM: 1.0, AM: 1.2, WM: 1.0, ST2: 1.1, FB: 0.5, WB: 0.6, W: 0.6, CB: 0.2, ST: 0.5 };
 const W_RUN = { ST: 1.3, ST2: 1.2, W: 1.1, AM: 0.9, WM: 0.7, CM: 0.35 };
 const W_RECOVER = { CB: 1.2, FB: 1.2, WB: 1.1, DM: 1.1, CM: 1.0, WM: 0.9, AM: 0.6, W: 0.5, ST2: 0.5, ST: 0.4 };
+const W_LANE = { DM: 1.15, CM: 0.95, CB: 0.55, FB: 0.75, WB: 0.75, WM: 0.6, AM: 0.4 };
 
 const URGENCY = {
   press: 1, chase: 1, intercept: 1, recover: 1,
-  runBehind: 0.95, overlap: 0.9, mark: 0.85,
+  runBehind: 0.95, overlap: 0.9, mark: 0.85, lane: 0.88,
   support: 0.78, holdWidth: 0.78, cover: 0.85, anchor: 0.72, dribble: 0.95,
 };
 
@@ -80,6 +81,7 @@ export function updateBrains(match, dt) {
     for (const p of team.players) {
       if (p.isGK || p.isHuman) continue;
       p.aiT -= dt;
+      if (p.oneTwoT > 0) p.oneTwoT -= dt; // give-and-go window after playing a pass
 
       // tackle reflex runs every frame, thoughts are throttled
       if (defending && !p.tackleT && !p.stunT) {
@@ -180,6 +182,29 @@ export function updateBrains(match, dt) {
             s: (9 + (Math.abs(ball.pos.z) < FIELD.halfW * 0.35 ? 2 : 0)) * cw - dBall * 0.08,
           });
         }
+        // cut the most dangerous passing lane (coordinates with whoever presses)
+        const lw = W_LANE[p.role];
+        if (lw && ball.owner) {
+          let danger = null, dS = -1e9;
+          for (const o of opp.players) {
+            if (o.isGK || o === ball.owner) continue;
+            const dOG = Math.hypot(o.pos.x - ownGoalX, o.pos.z);
+            if (dOG > 40 * K || distXZ(o.pos, ball.pos) > 30 * K) continue;
+            let marked = false;
+            for (const p2 of team.players) if (p2.markT === o) { marked = true; break; }
+            if (marked) continue;
+            const s = (40 * K - dOG) * 0.4 + (ROLE_ATT[o.role] ?? 0.5) * 5;
+            if (s > dS) { dS = s; danger = o; }
+          }
+          if (danger) {
+            const tx = (ball.pos.x + danger.pos.x) / 2;
+            const tz = (ball.pos.z + danger.pos.z) / 2;
+            cands.push({
+              act: 'lane', tx, tz,
+              s: (8.2 + style.press * 3) * lw - Math.hypot(p.pos.x - tx, p.pos.z - tz) * 0.12,
+            });
+          }
+        }
         // recover: caught upfield in transition
         if (transD && p.pos.x * dir > ballLX - 2 * K) {
           cands.push({
@@ -208,6 +233,15 @@ export function updateBrains(match, dt) {
             if (s > bestS) { bestS = s; bestSpot = { sx, sz }; }
           }
           if (bestSpot) cands.push({ act: 'support', tx: bestSpot.sx, tz: bestSpot.sz, s: (6 + bestS) * sw });
+        }
+        // give-and-go: just released a pass — burst past the new carrier for the return
+        if (p.oneTwoT > 0 && distXZ(p.pos, owner.pos) < 26 * K) {
+          cands.push({
+            act: 'runBehind',
+            tx: clamp(owner.pos.x + dir * 11 * K, -FIELD.halfL + 3, FIELD.halfL - 3),
+            tz: clamp((p.pos.z + owner.pos.z) * 0.5, -FIELD.halfW + 3, FIELD.halfW - 3),
+            s: 10.5 + style.chemistry * 3,
+          });
         }
         // run in behind the last defender
         const rw = W_RUN[p.role];
@@ -378,6 +412,28 @@ export function decideOnBall(match, p) {
   }
   if (bestThrough) acts.push({ n: 'through', s: bestThroughS, run: () => execThrough(match, p, bestThrough, dir, K) });
 
+  // switch play: lofted diagonal to a free man on the far flank
+  {
+    let swMate = null, swS = -1e9;
+    for (const mate of team.players) {
+      if (mate === p || mate.isGK) continue;
+      if (Math.abs(mate.pos.z - p.pos.z) < FIELD.halfW * 0.75) continue;
+      const progress = (mate.pos.x - p.pos.x) * dir;
+      if (progress < -8 * K) continue;
+      let open = 1e9;
+      for (const o of match.opponentsOf(team)) open = Math.min(open, distXZ(o.pos, mate.pos));
+      const s = Math.min(open, 10) * 0.9 + progress * 0.15 + style.width * 2;
+      if (s > swS) { swS = s; swMate = mate; }
+    }
+    if (swMate && swS > 4) {
+      acts.push({
+        n: 'switch',
+        s: 2 + style.width * 3 + (press < 2.5 ? 3 : 0) + swS * 0.35,
+        run: () => execSwitch(match, p, swMate),
+      });
+    }
+  }
+
   // cross from a wide channel
   if (Math.abs(p.pos.z) > FIELD.halfW * 0.5 && ballLX > FIELD.halfL * 0.4) {
     let boxMates = 0;
@@ -467,7 +523,20 @@ function execPass(match, p, mate, K) {
     match.kickBall(p, Math.cos(ang) * spd, 0, Math.sin(ang) * spd, null);
   }
   match.ball.intendedReceiver = mate;
+  p.oneTwoT = 2.2; // look for the return ball
   match.noteAI?.(p.team, 'pass');
+}
+
+// lofted cross-field diagonal, backspin so it sits down for the receiver
+function execSwitch(match, p, mate) {
+  const tx = mate.pos.x + mate.vel.x * 0.5;
+  const tz = mate.pos.z + mate.vel.z * 0.5;
+  const d = Math.hypot(tx - p.pos.x, tz - p.pos.z);
+  const T = clamp(d / 16, 0.7, 1.6);
+  const vx = (tx - p.pos.x) / T, vz = (tz - p.pos.z) / T;
+  const l = Math.hypot(vx, vz) || 1;
+  match.kickBall(p, vx, 9.81 * T / 2, vz, new THREE.Vector3((vz / l) * -5.5, 0, (-vx / l) * -5.5));
+  match.ball.intendedReceiver = mate;
 }
 
 function execThrough(match, p, mate, dir, K) {
@@ -481,6 +550,7 @@ function execThrough(match, p, mate, dir, K) {
   const l = Math.hypot(vx, vz) || 1;
   match.kickBall(p, vx, 0, vz, new THREE.Vector3((vz / l) * 4, 0, (-vx / l) * 4));
   match.ball.intendedReceiver = mate;
+  p.oneTwoT = 2.2;
 }
 
 function execCross(match, p, goalX, dir, K) {

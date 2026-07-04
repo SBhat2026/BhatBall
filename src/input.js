@@ -13,7 +13,10 @@ export class Input {
   constructor() {
     this.down = new Set();
     this.events = [];
-    this.charging = null; // { type: 'shoot'|'finesse', t0 }
+    this.charging = null; // { type: 'shoot'|'finesse'|'pass', t0, mouse? }
+    // mouse aiming: NDC tracked here, world point (this.aim) filled by main.js raycast
+    this.mouse = { x: 0, y: 0, active: false, lastMove: 0 };
+    this.aim = null; // { x, z } on the pitch plane
     addEventListener('keydown', (e) => {
       if (HANDLED.has(e.code)) e.preventDefault();
       if (e.repeat || this.down.has(e.code)) return;
@@ -25,13 +28,47 @@ export class Input {
       this._release(e.code);
     });
     addEventListener('blur', () => { this.down.clear(); this.charging = null; });
+
+    addEventListener('mousemove', (e) => {
+      this.mouse.x = (e.clientX / innerWidth) * 2 - 1;
+      this.mouse.y = -(e.clientY / innerHeight) * 2 + 1;
+      this.mouse.active = true;
+      this.mouse.lastMove = performance.now();
+    });
+    // LMB = shoot (hold for power), RMB = pass (hold for through ball) — both aim at the cursor
+    addEventListener('mousedown', (e) => {
+      if (e.target.id !== 'game') return; // ignore clicks on menus/HUD
+      if (e.button === 0) this.charging = { type: 'shoot', t0: performance.now(), mouse: true };
+      else if (e.button === 2) this.charging = { type: 'pass', t0: performance.now(), mouse: true };
+    });
+    addEventListener('mouseup', (e) => {
+      if (!this.charging?.mouse) return;
+      if (e.button === 0 && this.charging.type === 'shoot') {
+        this.events.push({ type: 'shoot', power: this.chargePower(), aim: this.aim });
+      } else if (e.button === 2 && this.charging.type === 'pass') {
+        const held = (performance.now() - this.charging.t0) / 1000;
+        if (held < 0.32) this.events.push({ type: 'pass', aim: this.aim });
+        else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), aim: this.aim });
+      } else return;
+      this.charging = null;
+    });
+    addEventListener('contextmenu', (e) => {
+      if (e.target.id === 'game') e.preventDefault();
+    });
   }
+
+  // aim only counts for keyboard actions if the mouse moved recently (actively aiming)
+  _aimNow() {
+    return this.mouse.active && performance.now() - this.mouse.lastMove < 2500 ? this.aim : null;
+  }
+
+  aimPoint() { return this._aimNow(); }
 
   _press(c) {
     if (c === 'Space') this.charging = { type: 'shoot', t0: performance.now() };
     else if (c === 'KeyI') this.charging = { type: 'finesse', t0: performance.now() };
     else if (c === 'KeyJ') this.charging = { type: 'pass', t0: performance.now() };
-    else if (c === 'KeyL') this.events.push({ type: 'chip' });
+    else if (c === 'KeyL') this.events.push({ type: 'chip', aim: this._aimNow() });
     else if (c === 'KeyQ') this.events.push({ type: 'sombrero' });
     else if (c === 'KeyE') this.events.push({ type: 'bicycle' });
     else if (c === 'KeyK') this.events.push({ type: 'tackle' });
@@ -44,14 +81,15 @@ export class Input {
   }
 
   _release(c) {
+    if (this.charging?.mouse) return; // mouse owns the charge
     if (c === 'Space' && this.charging?.type === 'shoot')
-      this.events.push({ type: 'shoot', power: this.chargePower() });
+      this.events.push({ type: 'shoot', power: this.chargePower(), aim: this._aimNow() });
     else if (c === 'KeyI' && this.charging?.type === 'finesse')
-      this.events.push({ type: 'finesse', power: Math.min(0.7, this.chargePower()) });
+      this.events.push({ type: 'finesse', power: Math.min(0.7, this.chargePower()), aim: this._aimNow() });
     else if (c === 'KeyJ' && this.charging?.type === 'pass') {
       const held = (performance.now() - this.charging.t0) / 1000;
-      if (held < 0.32) this.events.push({ type: 'pass' });
-      else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9) });
+      if (held < 0.32) this.events.push({ type: 'pass', aim: this._aimNow() });
+      else this.events.push({ type: 'through', power: Math.min(1, (held - 0.32) / 0.9), aim: this._aimNow() });
     } else return;
     this.charging = null;
   }
