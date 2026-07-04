@@ -146,6 +146,9 @@
       <span id="clock">0'</span>
     </div>
     <div id="banner"></div>
+    <div id="replayChip" class="hidden" style="position:absolute;top:70px;right:26px;font-size:12px;font-weight:800;letter-spacing:2px;color:#fff;background:#4a4f5caa;backdrop-filter:blur(4px);padding:7px 14px;border-radius:10px;">
+      ▶ REPLAY &nbsp;<span style="font-weight:600;color:#d5dae4;">Enter to skip</span>
+    </div>
     <div id="powerwrap"><div id="powerbar"></div></div>
     <canvas id="minimap" width="220" height="150"></canvas>
     <div id="hint">H controls · Tab switch player · C camera · P pause · M mute</div>
@@ -157,6 +160,8 @@
       <div><kbd>I</kbd> finesse curl &nbsp; <kbd>L</kbd> chip / lob</div>
       <div><kbd>Q</kbd> sombrero flick &nbsp; <kbd>E</kbd> bicycle kick (ball in air)</div>
       <div><kbd>K</kbd> slide tackle &nbsp; <kbd>Tab</kbd> switch player</div>
+      <div>Throw-ins: aim with move keys · <kbd>J</kbd> short throw · <kbd>Space/L</kbd> long throw</div>
+      <div><kbd>Enter</kbd> skip goal replay</div>
       <div><kbd>C</kbd> camera &nbsp; <kbd>H</kbd> this panel &nbsp; <kbd>P/Esc</kbd> pause &nbsp; <kbd>M</kbd> mute</div>
     </div>
   </div>
@@ -256,13 +261,15 @@
   </div>
 
   <div id="wcOverlay" class="overlay hidden">
-    <div class="card" style="max-width:480px; text-align:center;">
-      <h1>🏆 World Cup</h1>
-      <div class="wcArt">🚧</div>
-      <div class="sub" style="margin-bottom:6px;">Group stages, brackets, and glory are under construction.</div>
-      <div class="sub">The 16-team LAN knockout arrives first — World Cup mode follows.</div>
-      <div class="btnRow" style="justify-content:center;">
-        <button class="ghost" id="btnWCBack">← Back</button>
+    <div class="card" style="max-width:900px;">
+      <h1 style="font-size:28px;">🏆 World Cup</h1>
+      <div class="sub" id="wcSub"></div>
+      <div id="wcView"></div>
+      <div class="btnRow">
+        <button id="btnWCPlay">Kick off ▸</button>
+        <button class="ghost" id="btnWCSim" style="display:none">Sim to the final ▸</button>
+        <button class="ghost" id="btnWCNew">↺ New World Cup</button>
+        <button class="ghost" id="btnWCBack">← Menu</button>
       </div>
     </div>
   </div>

@@ -3,7 +3,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { TEAMS } from './teams.js';
+import { TEAMS, resolveKits } from './teams.js';
+import { newCup, myFixture, advance as advanceWC, simToEnd, cupHTML, roundName } from './worldcup.js';
 import { STADIUMS, buildStadium, Confetti, BallTrail } from './stadium.js';
 import { DIFFICULTY, FIELD, setField, clamp } from './config.js';
 import { TEAM_TACTICS, FORMATIONS, buildLineup } from './tactics.js';
@@ -11,9 +12,10 @@ import { Input } from './input.js';
 import { Match } from './match.js';
 import { GameCamera } from './camera.js';
 import { AudioEngine } from './audio.js';
-import { Net, RemoteInput, encodeSnapshot } from './net.js';
+import { Net, RemoteInput, encodeSnapshot, rigFx } from './net.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
+import { animateRig } from './rig.js';
 import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
@@ -87,7 +89,7 @@ function coachToast(msg) {
 
 function $(id) { return document.getElementById(id); }
 const sel = {
-  teamA: 0, teamB: 'random', stadium: 'day', diff: 'classic', len: 4,
+  teamA: 0, teamB: 'random', stadium: 'day', diff: 'classic', len: 5,
   neural: localStorage.getItem('pp-neural') !== '0',
 };
 
@@ -124,10 +126,10 @@ Object.entries(DIFFICULTY).forEach(([key, d]) => {
   el.dataset.id = key;
   $('diffs').appendChild(el);
 });
-[2, 4, 6].forEach((n) => {
+[5, 10, 15].forEach((n) => {
   const el = document.createElement('div');
   el.className = 'chip';
-  el.textContent = `${n} min`;
+  el.textContent = n === 5 ? '5 min · no break' : `${n} min`;
   el.onclick = () => { sel.len = n; refresh(); };
   el.dataset.id = n;
   $('lens').appendChild(el);
@@ -154,12 +156,11 @@ function refresh() {
   $('neuralChip').classList.toggle('sel', sel.neural);
   $('neuralChip').style.display = TRAINED_NET ? '' : 'none';
   $('btnResume').style.display = localStorage.getItem('pp-save') ? '' : 'none';
+  $('btnWC').textContent = localStorage.getItem('pp-wc') ? '🏆 World Cup · continue' : '🏆 World Cup';
   $('styleNote').textContent = teamStyleBlurb(sel.teamA);
 }
 refresh();
 
-$('btnWC').onclick = () => $('wcOverlay').classList.remove('hidden');
-$('btnWCBack').onclick = () => $('wcOverlay').classList.add('hidden');
 $('btnRematch').onclick = () => { $('endscreen').classList.add('hidden'); startSP(); };
 $('btnMenu').onclick = () => { $('endscreen').classList.add('hidden'); toMenu(); };
 $('btnStart').onclick = () => { audio.init(); startSP(); };
@@ -239,6 +240,138 @@ function buildScene(stadiumId) {
   return { scene, sfx, confetti, cam, composer: makeComposer(scene, preset), preset };
 }
 
+// --- goal replays (single-player): goal cam → player cam → cinematic ---------
+
+const REPLAY_STAGES = [
+  { cam: 'goal',   span: 3.4, rate: 1.0,  fov: 46, label: '▶ GOAL CAM' },
+  { cam: 'player', span: 3.0, rate: 0.7,  fov: 50, label: '▶ PLAYER CAM' },
+  { cam: 'cine',   span: 2.6, rate: 0.42, fov: 38, label: '▶ CINEMATIC' },
+];
+
+// rolling ~8s tape of every rig + the ball, sampled at 30Hz
+class Recorder {
+  constructor() { this.frames = []; this.acc = 0; }
+  tick(match, dt) {
+    this.acc -= dt;
+    if (this.acc > 0) return;
+    this.acc = 1 / 30;
+    const ps = [];
+    for (const team of [match.teamA, match.teamB]) {
+      for (const p of team.players) {
+        ps.push([p.pos.x, p.pos.z, p.rig.group.rotation.y, Math.hypot(p.vel.x, p.vel.z), rigFx(p.rig)]);
+      }
+    }
+    const b = match.ball;
+    this.frames.push({ ps, b: [b.pos.x, b.pos.y, b.pos.z] });
+    if (this.frames.length > 240) this.frames.shift();
+  }
+}
+
+function startReplay(g) {
+  const m = g.match;
+  const frames = g.rec.frames;
+  if (frames.length < 45) return; // not enough tape — skip quietly
+  const players = [...m.teamA.players, ...m.teamB.players];
+  g.replay = {
+    frames: frames.slice(), players,
+    meta: g.replayMeta ?? { goalSign: 1, scorerGi: -1 },
+    stage: 0, cursor: 0, cineA: Math.random() * 6.28,
+    fxPrev: players.map(() => 0),
+    saved: players.map((p) => ({ x: p.pos.x, z: p.pos.z, ry: p.rig.group.rotation.y })),
+  };
+  $('replayChip').classList.remove('hidden');
+  showBanner(REPLAY_STAGES[0].label, 900);
+}
+
+function endReplay(g) {
+  const r = g.replay;
+  if (!r) return;
+  g.replay = null;
+  $('replayChip').classList.add('hidden');
+  for (let k = 0; k < r.players.length; k++) {
+    const p = r.players[k], s = r.saved[k], rig = p.rig;
+    p.pos.set(s.x, 0, s.z); // pos aliases rig.group.position
+    rig.group.rotation.set(0, s.ry, 0);
+    rig.bicycleT = rig.slideT = rig.flickT = rig.finesseT = 0;
+    rig.kickT = rig.chipT = rig.throwT = 0;
+    rig.holdBall = false;
+  }
+  g.match.ball.mesh.position.copy(g.match.ball.pos);
+  camera.fov = 45;
+  camera.updateProjectionMatrix();
+  g.cam.snap(g.match.ball);
+  showBanner('', 1);
+}
+
+function stepReplay(g, dt) {
+  const r = g.replay;
+  const st = REPLAY_STAGES[r.stage];
+  const total = r.frames.length / 30;
+  const span = Math.min(st.span, total - 0.15);
+  r.cursor += dt * st.rate;
+  if (r.cursor >= span) {
+    r.stage++;
+    r.cursor = 0;
+    if (r.stage >= REPLAY_STAGES.length) return endReplay(g);
+    r.fxPrev = r.players.map(() => 0);
+    showBanner(REPLAY_STAGES[r.stage].label, 900);
+    return;
+  }
+
+  const fi = (total - span + r.cursor) * 30;
+  const i0 = Math.max(0, Math.min(r.frames.length - 1, Math.floor(fi)));
+  const i1 = Math.min(r.frames.length - 1, i0 + 1);
+  const q = fi - i0;
+  const f0 = r.frames[i0], f1 = r.frames[i1];
+
+  for (let k = 0; k < r.players.length; k++) {
+    const a = f0.ps[k], b = f1.ps[k];
+    const rig = r.players[k].rig;
+    rig.group.position.x = a[0] + (b[0] - a[0]) * q;
+    rig.group.position.z = a[1] + (b[1] - a[1]) * q;
+    const dr = b[2] - a[2];
+    rig.group.rotation.y = Math.abs(dr) > Math.PI ? b[2] : a[2] + dr * q;
+    const fx = b[4];
+    if ((fx & 1) && !(r.fxPrev[k] & 1)) rig.bicycleT = 1.05;
+    if ((fx & 2) && !(r.fxPrev[k] & 2)) rig.slideT = 0.55;
+    if ((fx & 4) && !(r.fxPrev[k] & 4)) rig.flickT = 0.4;
+    if ((fx & 8) && !(r.fxPrev[k] & 8)) rig.finesseT = 0.55;
+    if ((fx & 16) && !(r.fxPrev[k] & 16)) rig.throwT = 0.45;
+    if ((fx & 32) && !(r.fxPrev[k] & 32)) rig.kickT = 0.32;
+    if ((fx & 64) && !(r.fxPrev[k] & 64)) rig.chipT = 0.4;
+    rig.holdBall = !!(fx & 128);
+    r.fxPrev[k] = fx;
+    animateRig(rig, a[3] + (b[3] - a[3]) * q, dt * st.rate);
+  }
+
+  const bx = f0.b[0] + (f1.b[0] - f0.b[0]) * q;
+  const by = f0.b[1] + (f1.b[1] - f0.b[1]) * q;
+  const bz = f0.b[2] + (f1.b[2] - f0.b[2]) * q;
+  g.match.ball.mesh.position.set(bx, by, bz);
+
+  // camera per angle
+  const meta = r.meta;
+  if (st.cam === 'goal') {
+    camera.position.set(meta.goalSign * (FIELD.halfL + 6.5), 3.0, clamp(bz * 0.5, -9, 9));
+    camera.lookAt(bx, Math.max(by, 0.4), bz);
+  } else if (st.cam === 'player' && meta.scorerGi >= 0) {
+    const sp = r.players[meta.scorerGi].rig.group.position;
+    const dx = bx - sp.x, dz = bz - sp.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    camera.position.set(sp.x - (dx / dl) * 4.5, 2.4, sp.z - (dz / dl) * 4.5);
+    camera.lookAt(bx, 0.8, bz);
+  } else {
+    r.cineA += dt * 0.32;
+    const cx = (bx + meta.goalSign * FIELD.halfL * 0.8) / 2;
+    camera.position.set(cx + Math.cos(r.cineA) * 15, 5.5, bz * 0.4 + Math.sin(r.cineA) * 15);
+    camera.lookAt(bx, 1, bz);
+  }
+  if (camera.fov !== st.fov) {
+    camera.fov = st.fov;
+    camera.updateProjectionMatrix();
+  }
+}
+
 // --- game lifecycle ----------------------------------------------------------
 
 let game = null;
@@ -249,6 +382,7 @@ let game = null;
 function startHostedMatch(cfg) {
   const teamADef = TEAMS[cfg.aIdx];
   const teamBDef = TEAMS[cfg.bIdx];
+  const kits = resolveKits(teamADef, teamBDef);
   setField(cfg.sizeKey ?? '11');
   const base = buildScene(cfg.stadiumId);
   const trail = new BallTrail(base.scene);
@@ -257,15 +391,18 @@ function startHostedMatch(cfg) {
     kind: cfg.lan ? 'host' : 'sp',
     ...base, trail,
     paused: false, slow: -1, tabOpen: false,
-    cfg,
+    cfg, kits,
     remotes: cfg.remotes ?? new Map(),
     castT: 0,
+    rec: new Recorder(),
+    replay: null, replayIn: null,
   };
 
   const match = new Match(base.scene, {
-    teamADef, teamBDef,
+    teamADef, teamBDef, kits,
     diffKey: cfg.diffKey,
     lengthMin: cfg.len,
+    halves: cfg.len === 5 ? 1 : 2,
     goldenGoal: cfg.golden,
     sizeKey: cfg.sizeKey ?? '11',
     seats: cfg.seats,
@@ -282,6 +419,15 @@ function startHostedMatch(cfg) {
         showBanner(`GOAL!  ${scorer.def.code}${who}`, 2600);
         castAll({ k: 'goal', x, z, text: `GOAL!  ${scorer.def.code}${who}` });
         setScore(match.scoreA, match.scoreB, match.clockText());
+        // single-player: queue a multi-angle replay once the net stops rippling
+        if (!cfg.lan) {
+          const aCount = match.teamA.players.length;
+          g.replayMeta = {
+            goalSign: Math.sign(x || 1),
+            scorerGi: toucher ? (toucher.team.key === 'B' ? aCount + toucher.idx : toucher.idx) : -1,
+          };
+          g.replayIn = 1.05;
+        }
       },
       onBicycle: () => { g.slow = 0.45; base.cam.punch(); castAll({ k: 'sfx', n: 'kick', a: 1 }); },
       onFullTime: () => cfg.onEnd(match),
@@ -299,7 +445,7 @@ function startHostedMatch(cfg) {
   if (cfg.restore) match.restoreState(cfg.restore);
   base.cam.snap(match.ball);
 
-  setScoreboard(teamADef.code, teamADef.shirt, teamBDef.code, teamBDef.shirt);
+  setScoreboard(teamADef.code, kits.a.shirt, teamBDef.code, kits.b.shirt);
   setScore(match.scoreA, match.scoreB, match.clockText());
 
   $('menu').classList.add('hidden');
@@ -339,13 +485,90 @@ function startSP(restore = null, sizeKey = '11') {
   });
 }
 
+// --- World Cup mode ------------------------------------------------------------
+
+let wc = null;
+const WC_KEY = 'pp-wc';
+function loadWC() {
+  try { return JSON.parse(localStorage.getItem(WC_KEY) || 'null'); } catch { return null; }
+}
+function saveWC() { if (wc) localStorage.setItem(WC_KEY, JSON.stringify(wc)); }
+
+function openWC() {
+  if (!wc) wc = loadWC();
+  if (!wc) { wc = newCup(sel.teamA); saveWC(); }
+  renderWC();
+  $('menu').classList.add('hidden');
+  $('wcOverlay').classList.remove('hidden');
+}
+
+function renderWC() {
+  const my = TEAMS[wc.my];
+  const fx = myFixture(wc);
+  $('wcView').innerHTML = cupHTML(wc);
+  const play = $('btnWCPlay'), sim = $('btnWCSim');
+  if (wc.champion != null) {
+    $('wcSub').textContent = `${my.name} — tournament complete.`;
+    play.style.display = 'none';
+    sim.style.display = 'none';
+  } else if (fx) {
+    const opp = TEAMS[fx.h === wc.my ? fx.a : fx.h];
+    const label = fx.stage === 'group'
+      ? `Matchday ${fx.md}` : roundName(0, wc.ko.rounds[wc.ko.r].length);
+    $('wcSub').textContent = `You are ${my.name}. Up next — ${label} vs ${opp.name}.`;
+    play.textContent = `Play ${label} · vs ${opp.code} ▸`;
+    play.style.display = '';
+    sim.style.display = 'none';
+  } else {
+    $('wcSub').textContent = `${my.name} are out. Sim the rest to crown a champion.`;
+    play.style.display = 'none';
+    sim.style.display = '';
+  }
+}
+
+$('btnWC').onclick = () => { audio.init(); openWC(); };
+$('btnWCBack').onclick = () => { $('wcOverlay').classList.add('hidden'); toMenu(); };
+$('btnWCNew').onclick = () => { wc = newCup(sel.teamA); saveWC(); renderWC(); };
+$('btnWCSim').onclick = () => { simToEnd(wc); saveWC(); renderWC(); };
+
+$('btnWCPlay').onclick = () => {
+  const fx = myFixture(wc);
+  if (!fx) return;
+  const meFirst = fx.h === wc.my;
+  const isKO = fx.stage === 'ko';
+  $('wcOverlay').classList.add('hidden');
+  startHostedMatch({
+    aIdx: wc.my,
+    bIdx: meFirst ? fx.a : fx.h,
+    stadiumId: sel.stadium, diffKey: sel.diff, len: sel.len,
+    golden: isKO, sizeKey: '11',
+    seats: [{ key: 'H', side: 'A' }],
+    lan: false, wc: true,
+    onEnd: (m) => {
+      const res = meFirst
+        ? { h: fx.h, a: fx.a, sh: m.scoreA, sa: m.scoreB }
+        : { h: fx.h, a: fx.a, sh: m.scoreB, sa: m.scoreA };
+      advanceWC(wc, res);
+      saveWC();
+      const won = wc.champion === wc.my;
+      showBanner(won ? '🏆 WORLD CHAMPIONS!' : `FULL-TIME  ${m.scoreA} – ${m.scoreB}`, 2600);
+      if (won) { game.confetti.burst(0, 0); audio.roar(); }
+      setTimeout(() => {
+        game = null;
+        $('hud').classList.add('hidden');
+        openWC();
+      }, won ? 3600 : 2600);
+    },
+  });
+};
+
 // --- pause / tab menus ---------------------------------------------------------
 
 function togglePause(force) {
   if (!game || game.kind === 'client') return;
   game.paused = force ?? !game.paused;
   $('pauseMenu').classList.toggle('hidden', !game.paused);
-  $('btnSaveQuit').style.display = game.kind === 'sp' ? '' : 'none';
+  $('btnSaveQuit').style.display = game.kind === 'sp' && !game.cfg?.wc ? '' : 'none';
   castAll({ k: 'banner', text: game.paused ? 'HOST PAUSED' : '', ms: game.paused ? 0 : 1 });
 }
 $('btnResumePlay').onclick = () => togglePause(false);
@@ -708,12 +931,13 @@ function handleCast(d) {
   switch (d.k) {
     case 'fixture': {
       clientFixture = { aDef: TEAMS[d.a], bDef: TEAMS[d.b], mode: d.mode ?? '11' };
+      clientFixture.kits = resolveKits(clientFixture.aDef, clientFixture.bDef);
       clientSide = d.sides[myId] ?? null;
       setField(clientFixture.mode);
       const base = buildScene(d.stadium);
       clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientFixture.mode, String(myId));
       game = { kind: 'client', ...base, view: clientView, sendT: 0, tabOpen: false, slow: -1, paused: false };
-      setScoreboard(clientFixture.aDef.code, clientFixture.aDef.shirt, clientFixture.bDef.code, clientFixture.bDef.shirt);
+      setScoreboard(clientFixture.aDef.code, clientFixture.kits.a.shirt, clientFixture.bDef.code, clientFixture.kits.b.shirt);
       $('lobby').classList.add('hidden');
       $('bracketOverlay').classList.add('hidden');
       $('hud').classList.remove('hidden');
@@ -777,12 +1001,14 @@ function frame(now) {
 
   const gameplay = [];
   for (const e of events) {
-    if (e.type === 'camera') game.cam.toggle();
+    if (e.type === 'skip') { if (game.replay) endReplay(game); }
+    else if (e.type === 'camera') game.cam.toggle();
     else if (e.type === 'help') $('helpPanel').classList.toggle('hidden');
     else if (e.type === 'mute') showBanner(audio.toggleMute() ? 'MUTED' : 'SOUND ON', 900);
     else if (e.type === 'tab') game.tabOpen ? closeTabMenu() : openTabMenu();
     else if (e.type === 'pause') {
-      if (game.tabOpen) closeTabMenu();
+      if (game.replay) endReplay(game);
+      else if (game.tabOpen) closeTabMenu();
       else togglePause();
     } else gameplay.push(e);
   }
@@ -801,7 +1027,7 @@ function frame(now) {
     game.sfx.update(dt);
     game.cam.update(dt, game.view.ballProxy, game.view.playerProxy);
     const md = game.view.minimapData();
-    drawMinimapPts(md.a, md.b, md.ball, clientFixture.aDef.shirt, clientFixture.bDef.shirt,
+    drawMinimapPts(md.a, md.b, md.ball, clientFixture.kits.a.shirt, clientFixture.kits.b.shirt,
       clientSide ? game.view.playerProxy.pos : null);
     $('playerChip').textContent = game.view.myName() ?? '';
     const charging = input.charging;
@@ -812,6 +1038,18 @@ function frame(now) {
   }
 
   // sp / host
+  if (game.replayIn != null) {
+    game.replayIn -= dt;
+    if (game.replayIn <= 0) { game.replayIn = null; startReplay(game); }
+  }
+  if (game.replay) {
+    stepReplay(game, dt);
+    game.confetti.update(dt);
+    game.sfx.update(dt);
+    game.composer.render();
+    return;
+  }
+
   const spPause = game.paused || (game.kind === 'sp' && game.tabOpen);
   if (!spPause) {
     let scale = 1;
@@ -833,6 +1071,7 @@ function frame(now) {
     }
 
     game.match.update(simDt, inputs, evmap);
+    game.rec?.tick(game.match, simDt);
     game.confetti.update(simDt);
     game.sfx.update(simDt);
     game.trail.update(game.match.ball, simDt);
@@ -855,7 +1094,7 @@ function frame(now) {
   $('playerChip').textContent = hp ? `${hp.num} · ${hp.name}` : '';
   drawMinimapPts(
     m.teamA.players.map((p) => p.pos), m.teamB.players.map((p) => p.pos), m.ball.pos,
-    m.teamA.def.shirt, m.teamB.def.shirt, hp?.pos,
+    m.teamA.kit.shirt, m.teamB.kit.shirt, hp?.pos,
   );
 
   const charging = input.charging;
@@ -865,6 +1104,9 @@ function frame(now) {
   game.composer.render();
 }
 requestAnimationFrame(frame);
+
+// dev/test hook: reach the live game from the console
+window.pp = { get game() { return game; }, get wc() { return wc; } };
 
 // dev shortcut: ?autostart[&stadium=day|sunset|night][&mode=3|5|11]
 const qs = new URLSearchParams(location.search);

@@ -1,7 +1,7 @@
 // Replica renderer for LAN joiners/spectators: rigs + ball driven by host snapshots.
 import * as THREE from 'three';
 import { BALL } from './config.js';
-import { SKIN_TONES } from './teams.js';
+import { SKIN_TONES, resolveKits } from './teams.js';
 import { buildRig, animateRig } from './rig.js';
 import { buildLineup } from './tactics.js';
 
@@ -13,13 +13,16 @@ export class NetView {
     this.defs = { A: teamADef, B: teamBDef };
 
     const sizeKey = mode ?? '11';
+    const kits = resolveKits(teamADef, teamBDef);
+    this.kits = kits;
     for (const def of [teamADef, teamBDef]) {
       const lineup = buildLineup(def, sizeKey);
+      const kit = def === teamADef ? kits.a : kits.b;
       lineup.slots.forEach((slot, i) => {
         const isGK = slot.role === 'GK';
         const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
         const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-        const rig = buildRig(def, skin, isGK, { number: entry[0], captain: i === 6 });
+        const rig = buildRig(kit, skin, isGK, { number: entry[0], captain: i === 6 });
         this.scene.add(rig.group);
         this.players.push({
           rig,
@@ -78,6 +81,10 @@ export class NetView {
       if ((fx & 2) && !(p.fx & 2)) p.rig.slideT = 0.55;
       if ((fx & 4) && !(p.fx & 4)) p.rig.flickT = 0.4;
       if ((fx & 8) && !(p.fx & 8)) p.rig.finesseT = 0.55;
+      if ((fx & 16) && !(p.fx & 16)) p.rig.throwT = 0.45;
+      if ((fx & 32) && !(p.fx & 32)) p.rig.kickT = 0.32;
+      if ((fx & 64) && !(p.fx & 64)) p.rig.chipT = 0.4;
+      p.rig.holdBall = !!(fx & 128);
       p.fx = fx;
     }
     this.ballTgt.set(s.b[0], s.b[1], s.b[2]);

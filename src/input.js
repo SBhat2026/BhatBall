@@ -6,7 +6,7 @@ const MOVE = {
 };
 const HANDLED = new Set([
   ...Object.keys(MOVE), 'Space', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyQ', 'KeyE',
-  'KeyC', 'KeyH', 'KeyP', 'KeyM', 'Tab', 'Escape', 'ShiftLeft', 'ShiftRight',
+  'KeyC', 'KeyH', 'KeyP', 'KeyM', 'Tab', 'Escape', 'ShiftLeft', 'ShiftRight', 'Enter',
 ]);
 
 export class Input {
@@ -40,6 +40,7 @@ export class Input {
     else if (c === 'KeyP' || c === 'Escape') this.events.push({ type: 'pause' });
     else if (c === 'KeyM') this.events.push({ type: 'mute' });
     else if (c === 'Tab') this.events.push({ type: 'tab' });
+    else if (c === 'Enter') this.events.push({ type: 'skip' });
   }
 
   _release(c) {

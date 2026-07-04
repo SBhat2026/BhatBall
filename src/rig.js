@@ -1,23 +1,57 @@
 import * as THREE from 'three';
 
 // Low-poly player: hex-cylinder torso, icosphere head, box limbs. Matte pastel materials.
+// Kits can carry a torso pattern (Argentina stripes, Croatia checkers).
 
 const HAIR_COLORS = ['#2e2a28', '#4a3826', '#7a5a38', '#c9b18a', '#5a5f6b'];
 const numberTexCache = new Map();
+const kitTexCache = new Map();
 
-function numberTexture(n) {
-  if (numberTexCache.has(n)) return numberTexCache.get(n);
+const luminance = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
+};
+
+function numberTexture(n, ink) {
+  const key = `${n}|${ink}`;
+  if (numberTexCache.has(key)) return numberTexCache.get(key);
   const cv = document.createElement('canvas');
   cv.width = cv.height = 128;
   const ctx = cv.getContext('2d');
-  ctx.fillStyle = '#4a4f5c';
+  ctx.fillStyle = ink;
   ctx.font = '900 92px -apple-system, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(String(n), 64, 70);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  numberTexCache.set(n, tex);
+  numberTexCache.set(key, tex);
+  return tex;
+}
+
+// torso pattern painted onto a small wrapped canvas (headless-safe: falls back to plain)
+function kitTexture(base, pat, pat2) {
+  const key = `${base}|${pat}|${pat2}`;
+  if (kitTexCache.has(key)) return kitTexCache.get(key);
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 96;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = base;
+  ctx.fillRect(0, 0, 96, 96);
+  ctx.fillStyle = pat2;
+  if (pat === 'stripes') {
+    for (let x = 0; x < 96; x += 24) ctx.fillRect(x, 0, 12, 96);
+  } else if (pat === 'hoops') {
+    for (let y = 0; y < 96; y += 24) ctx.fillRect(0, y, 96, 12);
+  } else if (pat === 'checkers') {
+    const s = 16;
+    for (let y = 0; y < 6; y++) for (let x = 0; x < 6; x++) {
+      if ((x + y) % 2 === 0) ctx.fillRect(x * s, y * s, s, s);
+    }
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  kitTexCache.set(key, tex);
   return tex;
 }
 
@@ -25,6 +59,7 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   const shirt = isGK ? kit.gk : kit.shirt;
   const sleeve = isGK ? kit.gk : kit.sleeve;
   const shorts = isGK ? '#5c6478' : kit.shorts;
+  const canPaint = typeof document !== 'undefined';
 
   const mat = (c) => new THREE.MeshStandardMaterial({
     color: c, roughness: 0.95, metalness: 0, flatShading: true,
@@ -38,15 +73,21 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
     return mesh;
   };
 
-  const torso = add(new THREE.CylinderGeometry(0.26, 0.32, 0.68, 6), mat(shirt), 0, 1.12, 0);
+  const torsoMat = (!isGK && kit.pat && canPaint)
+    ? new THREE.MeshStandardMaterial({
+        map: kitTexture(kit.shirt, kit.pat, kit.pat2), roughness: 0.95, metalness: 0, flatShading: true,
+      })
+    : mat(shirt);
+  const torso = add(new THREE.CylinderGeometry(0.26, 0.32, 0.68, 6), torsoMat, 0, 1.12, 0);
   add(new THREE.CylinderGeometry(0.3, 0.3, 0.24, 6), mat(shorts), 0, 0.72, 0);
   add(new THREE.IcosahedronGeometry(0.22, 1), mat(skinTone), 0, 1.66, 0);
 
-  // shirt number on the back (rig faces +z, so back is -z)
-  if (opts.number != null && typeof document !== 'undefined') {
+  // shirt number on the back (rig faces +z, so back is -z); ink flips on dark shirts
+  if (opts.number != null && canPaint) {
+    const ink = luminance(shirt) > 0.55 ? '#4a4f5c' : '#f2f3f5';
     const plate = new THREE.Mesh(
       new THREE.PlaneGeometry(0.3, 0.34),
-      new THREE.MeshBasicMaterial({ map: numberTexture(opts.number), transparent: true }),
+      new THREE.MeshBasicMaterial({ map: numberTexture(opts.number, ink), transparent: true }),
     );
     plate.position.set(0, 1.2, -0.31);
     plate.rotation.y = Math.PI;
@@ -88,6 +129,10 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
     slideT: 0,    // slide tackle
     flickT: 0,    // sombrero heel flick
     finesseT: 0,  // curled-shot follow-through
+    kickT: 0,     // standard strike: plant + leg swings through
+    chipT: 0,     // scooped lob: toe under the ball, lean back
+    throwT: 0,    // throw-in release: arms whip overhead → forward
+    holdBall: false, // throw-in stance: ball held two-handed overhead
   };
 }
 
@@ -139,6 +184,26 @@ export function animateRig(rig, speed, dt) {
   g.position.y = 0;
   rig.armL.rotation.z = 0; rig.armR.rotation.z = 0;
 
+  // --- throw-in release: arms whip from overhead to full follow-through ---
+  if (rig.throwT > 0) {
+    rig.throwT = Math.max(0, rig.throwT - dt);
+    const q = 1 - rig.throwT / 0.45;
+    const arm = 3.0 - 3.7 * Math.min(1, q * 1.25); // overhead → out front
+    rig.armL.rotation.x = arm; rig.armR.rotation.x = arm;
+    g.rotation.x = -0.14 + 0.3 * Math.sin(Math.min(1, q * 1.3) * Math.PI / 2); // arch → snap forward
+    rig.legL.rotation.x = -0.2 * q; rig.legR.rotation.x = 0.25 * q;
+    if (rig.throwT <= 0) { rig.armL.rotation.x = 0; rig.armR.rotation.x = 0; g.rotation.x = 0; }
+    return;
+  }
+
+  // --- throw-in stance: both arms straight up holding the ball, slight arch ---
+  if (rig.holdBall) {
+    rig.armL.rotation.x = 3.0; rig.armR.rotation.x = 3.0;
+    g.rotation.x = -0.1;
+    rig.legL.rotation.x = 0; rig.legR.rotation.x = 0;
+    return;
+  }
+
   // --- sombrero: hop + heel flick ---
   if (rig.flickT > 0) {
     rig.flickT = Math.max(0, rig.flickT - dt);
@@ -161,6 +226,32 @@ export function animateRig(rig, speed, dt) {
     rig.armL.rotation.x = 0.8 * sweep; rig.armR.rotation.x = -0.8 * sweep;
     rig.torso.rotation.y = 0.4 * sweep;
     if (rig.finesseT <= 0) { rig.legR.rotation.z = 0; rig.torso.rotation.y = 0; }
+    return;
+  }
+
+  // --- chip: toe scoops under the ball, body leans back, arms flare ---
+  if (rig.chipT > 0) {
+    rig.chipT = Math.max(0, rig.chipT - dt);
+    const q = 1 - rig.chipT / 0.4;
+    const s = Math.sin(q * Math.PI);
+    rig.legR.rotation.x = 0.5 - 1.7 * Math.min(1, q * 1.4); // short backswing, scoop through
+    rig.legL.rotation.x = 0.12 * s;
+    g.rotation.x = -0.14 * s;              // lean back
+    rig.armL.rotation.x = -0.7 * s; rig.armR.rotation.x = 0.5 * s;
+    if (rig.chipT <= 0) g.rotation.x = 0;
+    return;
+  }
+
+  // --- standard kick: plant left, right leg winds back and drives through ---
+  if (rig.kickT > 0) {
+    rig.kickT = Math.max(0, rig.kickT - dt);
+    const q = 1 - rig.kickT / 0.32;
+    rig.legR.rotation.x = 0.9 - 2.5 * q;   // + is backswing, − swings through
+    rig.legL.rotation.x = -0.15;
+    rig.armL.rotation.x = -0.6 * Math.sin(q * Math.PI);
+    rig.armR.rotation.x = 0.6 * Math.sin(q * Math.PI);
+    g.rotation.x = 0.08 * Math.sin(q * Math.PI); // slight lean over the ball
+    if (rig.kickT <= 0) g.rotation.x = 0;
     return;
   }
 

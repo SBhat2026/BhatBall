@@ -31,13 +31,15 @@ export class Match {
     this.hooks = opts.hooks;
     this.lengthMin = opts.lengthMin;
     this.halfLen = (opts.lengthMin * 60) / 2;
+    this.halves = opts.halves ?? 2; // 1 = straight through, no half-time
     this.goldenGoal = !!opts.goldenGoal;
     this.golden = false;
     this.sizeKey = opts.sizeKey ?? '11';
 
     this.ball = new Ball(scene);
-    this.teamA = this._makeTeam(opts.teamADef, 1, MATE_DIFF, 'A');
-    this.teamB = this._makeTeam(opts.teamBDef, -1, DIFFICULTY[opts.diffKey], 'B');
+    const kits = opts.kits ?? { a: opts.teamADef, b: opts.teamBDef };
+    this.teamA = this._makeTeam(opts.teamADef, 1, MATE_DIFF, 'A', kits.a);
+    this.teamB = this._makeTeam(opts.teamBDef, -1, DIFFICULTY[opts.diffKey], 'B', kits.b);
 
     // seats: human-controlled players. 'H' = the host keyboard.
     this.seats = {};      // key → player
@@ -72,6 +74,7 @@ export class Match {
     this.transTeam = null;
     this.transT = 99;
     this._zoneT = 0;
+    this._moodT = 4;
 
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.55, 0.78, 28),
@@ -85,11 +88,12 @@ export class Match {
     this.ball.reset(0, 0);
   }
 
-  _makeTeam(def, dir, diff, key) {
+  _makeTeam(def, dir, diff, key, kit) {
     const lineup = buildLineup(def, this.sizeKey);
     const team = {
-      def, dir, diff, key, players: [],
-      style: lineup.style, kickerIdx: lineup.kicker,
+      def, dir, diff, key, kit: kit ?? def, players: [],
+      style: lineup.style, baseStyle: { ...lineup.style }, kickerIdx: lineup.kicker,
+      mood: 0, moodRegime: 'level',
       adapt: { shiftZ: 0, closeDown: 0, lineDrop: 0, wideDeep: 0, tackleBoost: 0 },
       policyNet: null,
     };
@@ -98,7 +102,7 @@ export class Match {
       const isGK = slot.role === 'GK';
       const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
       const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-      const rig = buildRig(def, skin, isGK, { number: entry[0], captain: i === 6 });
+      const rig = buildRig(kit ?? def, skin, isGK, { number: entry[0], captain: i === 6 });
       this.scene.add(rig.group);
       team.players.push({
         team, idx: i, role: slot.role, isGK, isHuman: false, seatKey: null,
@@ -174,6 +178,7 @@ export class Match {
         p.aiT = 0; p.kickCd = 0; p.touchCd = 0;
         p.tackleT = 0; p.stunT = 0; p.holdT = 0;
         p.rig.bicycleT = 0; p.rig.slideT = 0; p.rig.flickT = 0; p.rig.finesseT = 0;
+        p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.holdBall = false;
         p.rig.group.rotation.set(0, Math.atan2(team.dir, 0), 0);
       }
     }
@@ -196,6 +201,13 @@ export class Match {
     if (isDribble) p.kickCd = 0;
     p.touchCd = isDribble ? 0.16 : 0.1;
     const sp = Math.hypot(vx, vy, vz);
+    // strike animation — lofted balls scoop, everything else swings through,
+    // unless a specialty move (bicycle/finesse/sombrero) already owns the body
+    if (!isDribble && p.rig && p.rig.bicycleT <= 0 && p.rig.finesseT <= 0
+        && p.rig.flickT <= 0 && p.rig.throwT <= 0) {
+      if (!isShot && vy > Math.hypot(vx, vz) * 0.32) p.rig.chipT = 0.4;
+      else p.rig.kickT = 0.32;
+    }
     this.hooks.sfx?.(isDribble ? 'touch' : 'kick', Math.min(1, sp / 26));
   }
 
@@ -216,6 +228,7 @@ export class Match {
     x = clamp(x, -halfL + 0.2, halfL - 0.2);
     z = clamp(z, -halfW + 0.2, halfW - 0.2);
     if (kind === 'penalty') { x = team.dir * (halfL - FIELD.penSpot); z = 0; }
+    if (kind === 'throwin') z = Math.sign(z) * (halfW - 0.2);
     this.ball.reset(x, z);
     this.state = 'SETPIECE';
 
@@ -243,12 +256,17 @@ export class Match {
     // setup targets
     const def = this.otherTeam(team);
     const goalX = team.dir * halfL; // goal being attacked
-    const behind = kind === 'penalty' ? 2.2 : 1.1;
-    _v.set(Math.sign(-goalX + x) || -team.dir, 0, 0); // step back from goal direction
-    taker.target.set(x + _v.x * behind, 0, z + (kind === 'corner' ? -Math.sign(z) * 1.2 : 0));
+    if (kind === 'throwin') {
+      taker.target.set(x, 0, z); // stands on the line, ball overhead
+      taker.heading.set(0, 0, -Math.sign(z) || 1);
+    } else {
+      const behind = kind === 'penalty' ? 2.2 : 1.1;
+      _v.set(Math.sign(-goalX + x) || -team.dir, 0, 0); // step back from goal direction
+      taker.target.set(x + _v.x * behind, 0, z + (kind === 'corner' ? -Math.sign(z) * 1.2 : 0));
+      taker.heading.set(team.dir, 0, 0);
+    }
     taker.pos.copy(taker.target); // taker jogs over off-camera — snap to spot
     taker.vel.set(0, 0, 0);
-    taker.heading.set(team.dir, 0, 0);
 
     const inRange = Math.abs(goalX - x) < 32 * K;
     const maxWall = this.sizeKey === '11' ? 3 : 2;
@@ -275,6 +293,21 @@ export class Match {
           } else {
             p.target.set(p.base.x * team.dir + 10 * team.dir * K, 0, p.base.z);
           }
+        } else if (kind === 'throwin') {
+          const d = distXZ(p.pos, this.ball.pos);
+          if (p.team === team && !p.isGK && d < 22 * K) {
+            // two-ish teammates come short to offer an option
+            const infield = -Math.sign(z);
+            p.target.set(
+              x + rand(-7, 7) * K + (p.pos.x - x) * 0.3, 0,
+              z + infield * rand(4, 10) * K,
+            );
+          } else if (p.team === def && !p.isGK && d < 18 * K) {
+            // defenders shade toward the throw
+            p.target.set(p.pos.x * 0.5 + x * 0.5, 0, p.pos.z * 0.6 + z * 0.4 - Math.sign(z) * 2);
+          } else {
+            p.target.set(p.team.dir * p.base.x + x * 0.35, 0, p.base.z * 0.85 + z * 0.15);
+          }
         } else {
           // goal kick / deep free kick: spread back out
           p.target.set(p.team.dir * p.base.x + this.ball.pos.x * 0.2, 0, p.base.z);
@@ -284,7 +317,7 @@ export class Match {
       }
     }
 
-    const label = { corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!' }[kind];
+    const label = { corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!', throwin: 'THROW-IN' }[kind];
     this.hooks.banner(label, kind === 'penalty' ? 2000 : 1100);
     this.hooks.sfx?.('whistle', 1);
   }
@@ -308,16 +341,32 @@ export class Match {
         if (p.vel.lengthSq() > 0.36) p.heading.copy(p.vel).normalize();
       }
     }
+    // throw-in: taker stands on the line, ball held two-handed overhead
+    if (sp.kind === 'throwin') {
+      const t = sp.taker;
+      t.heading.set(0, 0, -Math.sign(t.pos.z) || 1);
+      t.rig.group.rotation.y = Math.atan2(t.heading.x, t.heading.z);
+      t.rig.holdBall = true;
+      this.ball.pos.set(t.pos.x + t.heading.x * 0.12, 2.02, t.pos.z + t.heading.z * 0.12);
+      this.ball.vel.set(0, 0, 0);
+    }
     this.ball.mesh.position.copy(this.ball.pos);
 
     if (!sp.ready) return;
 
     const seatKey = this._seatKeyOf(sp.taker);
     if (seatKey && sp.t < 9) {
-      // face the play
-      sp.taker.heading.set(sp.team.dir, 0, 0);
       const evts = events[seatKey] ?? [];
       const input = inputs[seatKey] ?? IDLE_INPUT;
+      if (sp.kind === 'throwin') {
+        for (const e of evts) {
+          if (e.type === 'pass') this._takeThrow(sp, input, false);
+          else if (e.type === 'through' || e.type === 'shoot' || e.type === 'chip') this._takeThrow(sp, input, true);
+        }
+        return;
+      }
+      // face the play
+      sp.taker.heading.set(sp.team.dir, 0, 0);
       for (const e of evts) {
         if (e.type === 'pass' || e.type === 'through') this._takePass(sp, input, e);
         else if (e.type === 'chip') this._takeCross(sp);
@@ -326,6 +375,33 @@ export class Match {
     } else if (!seatKey || sp.t >= 9) {
       this._aiTake(sp);
     }
+  }
+
+  // two-handed throw from the line: short to feet, or a long hurl down the wing
+  _takeThrow(sp, input, long = false) {
+    const h = sp.taker;
+    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 3, long ? 30 : 16, long);
+    const infield = -Math.sign(h.pos.z) || 1;
+    let tx, tz;
+    if (mate) {
+      tx = mate.pos.x + mate.vel.x * 0.3;
+      tz = mate.pos.z + mate.vel.z * 0.3;
+    } else {
+      tx = h.pos.x + h.team.dir * 6;
+      tz = h.pos.z + infield * 8;
+    }
+    const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
+    const T = clamp(d / 13, 0.45, 1.15);
+    const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
+    const vy = (BALL.g * T) / 2 - 1.8 / T; // released ~2m up, arrives at the grass
+    h.rig.holdBall = false;
+    h.rig.throwT = 0.45;
+    this.ball.pos.set(h.pos.x + h.heading.x * 0.2, 2.02, h.pos.z + h.heading.z * 0.2);
+    this.ball.kick(h, _v.set(vx, vy, vz), null);
+    h.touchCd = 0.15;
+    if (mate) this.ball.intendedReceiver = mate;
+    this.hooks.sfx?.('touch', 0.7);
+    this._resumeFromSetPiece(sp);
   }
 
   _resumeFromSetPiece(sp) {
@@ -400,6 +476,7 @@ export class Match {
     const goalX = sp.team.dir * FIELD.halfL;
     const x = this.ball.pos.x, z = this.ball.pos.z;
     const dGoal = Math.hypot(goalX - x, z);
+    if (sp.kind === 'throwin') return this._takeThrow(sp, null, Math.random() < 0.3);
     if (sp.kind === 'penalty') this._takeShot(sp, null, 0.6, false);
     else if (sp.kind === 'corner') this._takeCross(sp);
     else if (sp.kind === 'freekick' && dGoal < 27 * K && Math.abs(z) < 16 * K) this._takeShot(sp, null, 0.55, true);
@@ -491,15 +568,7 @@ export class Match {
 
   _play(dt, inputs, events) {
     this.elapsed += dt;
-    if (this.half === 1 && this.elapsed >= this.halfLen) {
-      this.state = 'HALF';
-      this.stateT = 3;
-      this.secondHalfKicker = this.firstHalfKicker === this.teamA ? this.teamB : this.teamA;
-      this.hooks.banner('HALF-TIME', 2600);
-      this.hooks.sfx?.('whistle', 2);
-      return;
-    }
-    if (this.half === 2 && this.elapsed >= this.halfLen * 2) {
+    if (this.elapsed >= this.halfLen * 2) {
       if (this.goldenGoal && this.scoreA === this.scoreB) {
         if (!this.golden) {
           this.golden = true;
@@ -512,9 +581,24 @@ export class Match {
         this.hooks.onFullTime();
         return;
       }
+    } else if (this.halves === 2 && this.half === 1 && this.elapsed >= this.halfLen) {
+      this.state = 'HALF';
+      this.stateT = 3;
+      this.secondHalfKicker = this.firstHalfKicker === this.teamA ? this.teamB : this.teamA;
+      this.hooks.banner('HALF-TIME', 2600);
+      this.hooks.sfx?.('whistle', 2);
+      return;
     }
     if (this.lock.t > 0) this.lock.t -= dt;
     this.transT += dt;
+
+    // scoreline mood: losing sides chase, leading sides shut up shop
+    this._moodT -= dt;
+    if (this._moodT <= 0) {
+      this._moodT = 3;
+      this._updateMood(this.teamA);
+      this._updateMood(this.teamB);
+    }
 
     // scouting: sample attack channels + roll the adjustment clock
     this._zoneT -= dt;
@@ -917,21 +1001,50 @@ export class Match {
       return;
     }
 
-    if (Math.abs(ball.pos.z) > halfW + 0.4) {
+    if (Math.abs(ball.pos.z) > halfW + 0.4 && this.state === 'PLAY') {
       const zSign = Math.sign(ball.pos.z);
-      const toTeam = ball.lastTouch ? this.otherTeam(ball.lastTouch.team) : null;
-      ball.reset(clamp(ball.pos.x, -halfL + 1, halfL - 1), zSign * (halfW - 0.4));
-      if (toTeam) this.lock = { team: toTeam, t: 1.5 };
-      this.hooks.banner('THROW-IN', 800);
+      const toTeam = ball.lastTouch ? this.otherTeam(ball.lastTouch.team) : this.teamA;
+      ball.owner = null;
+      this.enterSetPiece('throwin', toTeam,
+        clamp(ball.pos.x, -halfL + 1.5, halfL - 1.5), zSign * (halfW - 0.2));
     }
   }
 
   setFirstKicker(team) { this.firstHalfKicker = team; }
 
+  // Blend each side's live style between its base DNA and a chasing/protecting
+  // posture driven by the scoreline and how little time is left.
+  _updateMood(team) {
+    const myScore = team === this.teamA ? this.scoreA : this.scoreB;
+    const oppScore = team === this.teamA ? this.scoreB : this.scoreA;
+    const d = myScore - oppScore;
+    const frac = clamp(this.elapsed / (this.halfLen * 2), 0, 1);
+    let mood = 0; // +1 all-out attack … -1 park the bus
+    if (d < 0) mood = Math.min(2, -d) * 0.5 * (0.35 + 0.65 * frac);
+    else if (d > 0 && frac > 0.45) mood = -Math.min(2, d) * 0.4 * ((frac - 0.45) / 0.55);
+    team.mood = mood;
+    const b = team.baseStyle, s = team.style;
+    s.line = clamp(b.line + 0.22 * mood, 0.05, 0.95);
+    s.press = clamp(b.press + 0.18 * mood, 0.05, 0.95);
+    s.risk = clamp(b.risk + 0.3 * mood, 0.05, 0.95);
+    s.directness = clamp(b.directness + 0.18 * Math.abs(mood), 0.05, 0.95);
+    s.counter = clamp(b.counter + 0.25 * Math.max(0, -mood), 0.05, 0.95);
+    s.aggression = clamp(b.aggression + 0.2 * Math.max(0, mood), 0.05, 0.95);
+    team.aggro = team.diff.tackleAggro * (0.7 + 0.6 * s.aggression);
+    const regime = mood > 0.3 ? 'chasing' : mood < -0.2 ? 'protecting' : 'level';
+    if (regime !== team.moodRegime) {
+      team.moodRegime = regime;
+      if (regime === 'chasing') this.hooks.coach?.(`${team.def.code}: chasing the game — higher line, more risks`);
+      else if (regime === 'protecting') this.hooks.coach?.(`${team.def.code}: protecting the lead — sitting deep, hitting on the break`);
+      else this.hooks.coach?.(`${team.def.code}: back to the game plan`);
+    }
+  }
+
   clockText() {
     const total = this.halfLen * 2;
     const mins = Math.floor((this.elapsed / total) * 90);
     if (this.golden) return `${mins}'  ·  golden goal`;
+    if (this.halves === 1) return `${Math.min(90, mins)}'`;
     return `${Math.min(90, mins)}'  ·  ${this.half === 1 ? '1st' : '2nd'} half`;
   }
 

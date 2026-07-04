@@ -73,8 +73,9 @@ export function updateBrains(match, dt) {
       if (p.act === 'press' || p.act === 'chase') pressers++;
       else if (p.act === 'runBehind') runners++;
     }
+    const mood = team.mood ?? 0;
     const maxPress = 1 + Math.round(style.press * 2 + adapt.closeDown);
-    const maxRun = style.chemistry > 0.8 ? 3 : 2;
+    const maxRun = (style.chemistry > 0.8 ? 3 : 2) + (mood > 0.5 ? 1 : 0);
 
     for (const p of team.players) {
       if (p.isGK || p.isHuman) continue;
@@ -117,7 +118,7 @@ export function updateBrains(match, dt) {
       {
         let bias, tz;
         if (attacking) {
-          bias = (11 + att * 9) * K;
+          bias = (11 + att * 9 + mood * 5) * K; // chasing sides commit extra bodies
           tz = p.base.z * (0.72 + style.width * 0.5) + ball.pos.z * 0.15;
         } else if (defending) {
           const lineK = clamp(style.line - adapt.lineDrop, 0.1, 1);

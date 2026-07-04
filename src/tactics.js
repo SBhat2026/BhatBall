@@ -101,6 +101,8 @@ export const TEAM_TACTICS = {
   // 4-4-2 grit
   USA: { formation: '442', style: { line: 0.6, press: 0.7, width: 0.6, directness: 0.7, risk: 0.55, flair: 0.4, chemistry: 0.55, aggression: 0.65, counter: 0.75 } },
   URU: { formation: '442', style: { line: 0.45, press: 0.6, width: 0.55, directness: 0.7, risk: 0.5, flair: 0.4, chemistry: 0.6, aggression: 0.95, counter: 0.7 } },
+  // island underdogs: deep block, direct, fearless on the break
+  CPV: { formation: '442', style: { line: 0.3, press: 0.45, width: 0.55, directness: 0.75, risk: 0.45, flair: 0.5, chemistry: 0.55, aggression: 0.7, counter: 0.9 } },
   // back-three
   JPN: {
     formation: '3421', xiMap: [0, 1, 2, 3, 4, 10, 5, 6, 7, 8, 9],

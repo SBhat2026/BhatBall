@@ -315,6 +315,7 @@ function buildClouds(scene, preset) {
     color: '#ffffff', roughness: 1, metalness: 0, flatShading: true,
     transparent: true, opacity: 0.85,
   });
+  const clouds = [];
   for (let i = 0; i < 9; i++) {
     const c = new THREE.Group();
     for (let j = 0; j < 4; j++) {
@@ -326,8 +327,54 @@ function buildClouds(scene, preset) {
     const ang = rand(0, Math.PI * 2);
     const dist = rand(120, 200);
     c.position.set(Math.cos(ang) * dist, rand(35, 60), Math.sin(ang) * dist);
+    c.userData.drift = rand(0.6, 1.8);
+    clouds.push(c);
     scene.add(c);
   }
+  return clouds;
+}
+
+// lazy gulls circling the ground on daylight presets
+function buildBirds(scene) {
+  const birds = [];
+  const dark = new THREE.MeshBasicMaterial({ color: '#4a4f5c', side: THREE.DoubleSide });
+  for (let i = 0; i < 5; i++) {
+    const b = new THREE.Group();
+    const wl = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.35), dark);
+    const wr = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.35), dark);
+    wl.position.x = -0.6; wr.position.x = 0.6;
+    b.add(wl, wr);
+    b.userData = {
+      wl, wr,
+      r: rand(45, 100), h: rand(16, 30),
+      a: rand(0, Math.PI * 2), sp: rand(0.08, 0.16) * (Math.random() < 0.5 ? 1 : -1),
+      flap: rand(0, 6.28),
+    };
+    scene.add(b);
+    birds.push(b);
+  }
+  return birds;
+}
+
+// fireflies drifting low around the night pitch
+function buildFireflies(scene) {
+  const n = 42;
+  const pos = new Float32Array(n * 3);
+  const seed = [];
+  for (let i = 0; i < n; i++) {
+    seed.push({ x: rand(-60, 60), y: rand(0.5, 4), z: rand(-40, 40), p: rand(0, 6.28) });
+    pos[i * 3] = seed[i].x; pos[i * 3 + 1] = seed[i].y; pos[i * 3 + 2] = seed[i].z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const mat = new THREE.PointsMaterial({
+    color: '#d9e8a0', size: 0.22, transparent: true, opacity: 0.7,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const pts = new THREE.Points(geo, mat);
+  pts.frustumCulled = false;
+  scene.add(pts);
+  return { pts, seed, pos, mat };
 }
 
 function buildStars(scene) {
@@ -383,7 +430,9 @@ export function buildStadium(scene, preset) {
   const flags = buildFlags(scene);
   buildBenches(scene, preset);
   if (preset.floodlights) buildFloodlights(scene);
-  if (preset.clouds) buildClouds(scene, preset);
+  const clouds = preset.clouds ? buildClouds(scene, preset) : [];
+  const birds = preset.clouds ? buildBirds(scene) : [];
+  const flies = preset.stars ? buildFireflies(scene) : null;
   if (preset.stars) buildStars(scene);
   if (preset.sunDisc) {
     const disc = new THREE.Mesh(
@@ -394,14 +443,40 @@ export function buildStadium(scene, preset) {
     scene.add(disc);
   }
 
-  // live effects handle: waving flags, net ripple, crowd bounce on goals
+  // live effects handle: waving flags, net ripple, crowd bounce on goals,
+  // drifting clouds, circling gulls, fireflies, an idle crowd sway
   const m4 = new THREE.Matrix4();
-  let t = 0, netPulse = 0, pulseNet = null, crowdWave = 0;
+  let t = 0, netPulse = 0, pulseNet = null, crowdWave = 0, swayCursor = 0;
   return {
     update(dt) {
       t += dt;
       for (const f of flags) f.rotation.y = 0.35 * Math.sin(t * 2.6 + f.userData.base);
 
+      for (const c of clouds) {
+        c.position.x += c.userData.drift * dt;
+        if (c.position.x > 240) c.position.x = -240;
+      }
+      for (const b of birds) {
+        const u = b.userData;
+        u.a += u.sp * dt;
+        u.flap += dt * 9;
+        b.position.set(Math.cos(u.a) * u.r, u.h + Math.sin(t * 0.7 + u.flap) * 1.5, Math.sin(u.a) * u.r);
+        b.rotation.y = -u.a - Math.sign(u.sp) * Math.PI / 2;
+        const w = Math.sin(u.flap) * 0.55;
+        u.wl.rotation.z = w; u.wr.rotation.z = -w;
+      }
+      if (flies) {
+        for (let i = 0; i < flies.seed.length; i++) {
+          const s = flies.seed[i];
+          flies.pos[i * 3] = s.x + Math.sin(t * 0.5 + s.p) * 3;
+          flies.pos[i * 3 + 1] = s.y + Math.sin(t * 0.9 + s.p * 2) * 0.8;
+          flies.pos[i * 3 + 2] = s.z + Math.cos(t * 0.4 + s.p) * 3;
+        }
+        flies.pts.geometry.attributes.position.needsUpdate = true;
+        flies.mat.opacity = 0.45 + 0.3 * Math.sin(t * 2.3);
+      }
+
+      const { inst, seats } = crowd;
       if (netPulse > 0) {
         netPulse -= dt;
         const k = Math.max(0, netPulse / 0.9);
@@ -410,13 +485,23 @@ export function buildStadium(scene, preset) {
       }
       if (crowdWave > 0) {
         crowdWave -= dt;
-        const { inst, seats } = crowd;
         for (let i = 0; i < seats.length; i++) {
           const s = seats[i];
           const hop = Math.max(0, Math.sin(crowdWave * 7 + i * 0.35)) * 0.4 * Math.min(1, crowdWave);
           m4.setPosition(s[0], s[1] + hop, s[2]);
           inst.setMatrixAt(i, m4);
         }
+        inst.instanceMatrix.needsUpdate = true;
+      } else {
+        // idle sway: refresh a slice of the crowd each frame (cheap breathing bob)
+        const slice = Math.ceil(seats.length / 10);
+        const end = Math.min(seats.length, swayCursor + slice);
+        for (let i = swayCursor; i < end; i++) {
+          const s = seats[i];
+          m4.setPosition(s[0], s[1] + 0.05 * Math.sin(t * 1.7 + i * 0.6), s[2]);
+          inst.setMatrixAt(i, m4);
+        }
+        swayCursor = end >= seats.length ? 0 : end;
         inst.instanceMatrix.needsUpdate = true;
       }
     },
