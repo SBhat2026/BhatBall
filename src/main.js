@@ -5,13 +5,15 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { TEAMS } from './teams.js';
 import { STADIUMS, buildStadium, Confetti, BallTrail } from './stadium.js';
-import { DIFFICULTY, FIELD, CONTROLLED_INDEX, clamp } from './config.js';
+import { DIFFICULTY, FIELD, setField, clamp } from './config.js';
+import { TEAM_TACTICS, FORMATIONS, buildLineup } from './tactics.js';
 import { Input } from './input.js';
 import { Match } from './match.js';
 import { GameCamera } from './camera.js';
 import { AudioEngine } from './audio.js';
 import { Net, RemoteInput, encodeSnapshot } from './net.js';
 import { NetView } from './netview.js';
+import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
 
@@ -47,10 +49,46 @@ function makeComposer(scene, preset) {
 const input = new Input();
 const audio = new AudioEngine();
 
+// --- dev mode (invisible adaptation feed) -----------------------------------
+
+const dev = { on: sessionStorage.getItem('pp-dev') === '1' };
+const DEV_PW = '1s2i3d4d';
+$('devIcon').onclick = () => {
+  if (dev.on) {
+    dev.on = false;
+    sessionStorage.removeItem('pp-dev');
+    $('devIcon').style.opacity = 0.18;
+    return;
+  }
+  const pw = window.prompt('');
+  if (pw === DEV_PW) {
+    dev.on = true;
+    sessionStorage.setItem('pp-dev', '1');
+    $('devIcon').style.opacity = 0.7;
+    coachToast('dev mode on — AI adaptation feed live');
+  }
+};
+if (dev.on) $('devIcon').style.opacity = 0.7;
+
+function coachToast(msg) {
+  if (!dev.on) return;
+  const box = $('devToasts');
+  const el = document.createElement('div');
+  el.className = 'devToast';
+  el.textContent = `🧠 ${msg}`;
+  box.appendChild(el);
+  setTimeout(() => { el.style.opacity = 0; }, 4200);
+  setTimeout(() => el.remove(), 5000);
+  while (box.children.length > 5) box.firstChild.remove();
+}
+
 // --- menu wiring ------------------------------------------------------------
 
-const $ = (id) => document.getElementById(id);
-const sel = { teamA: 0, teamB: 'random', stadium: 'day', diff: 'classic', len: 4 };
+function $(id) { return document.getElementById(id); }
+const sel = {
+  teamA: 0, teamB: 'random', stadium: 'day', diff: 'classic', len: 4,
+  neural: localStorage.getItem('pp-neural') !== '0',
+};
 
 const chipHTML = (t) => `<span class="sw" style="background:${t.shirt}; --sw2:${t.sleeve}"></span>${t.code}`;
 
@@ -93,6 +131,17 @@ Object.entries(DIFFICULTY).forEach(([key, d]) => {
   el.dataset.id = n;
   $('lens').appendChild(el);
 });
+$('neuralChip').onclick = () => {
+  sel.neural = !sel.neural;
+  localStorage.setItem('pp-neural', sel.neural ? '1' : '0');
+  refresh();
+};
+
+function teamStyleBlurb(i) {
+  const t = TEAMS[i];
+  const tt = TEAM_TACTICS[t.code];
+  return tt ? `${t.name} · ${tt.formation.split('').join('-')}` : t.name;
+}
 
 function refresh() {
   [...$('gridA').children].forEach((el, i) => el.classList.toggle('sel', i === sel.teamA));
@@ -101,7 +150,10 @@ function refresh() {
   [...$('stadiums').children].forEach((el) => el.classList.toggle('sel', el.dataset.id === sel.stadium));
   [...$('diffs').children].forEach((el) => el.classList.toggle('sel', el.dataset.id === sel.diff));
   [...$('lens').children].forEach((el) => el.classList.toggle('sel', +el.dataset.id === sel.len));
+  $('neuralChip').classList.toggle('sel', sel.neural);
+  $('neuralChip').style.display = TRAINED_NET ? '' : 'none';
   $('btnResume').style.display = localStorage.getItem('pp-save') ? '' : 'none';
+  $('styleNote').textContent = teamStyleBlurb(sel.teamA);
 }
 refresh();
 
@@ -190,23 +242,22 @@ function buildScene(stadiumId) {
 
 let game = null;
 
-// cfg: { aIdx, bIdx, stadiumId, diffKey, len, golden, hostSide, remoteA, remoteB, spectate, lan, restore, onEnd }
+// cfg: { aIdx, bIdx, stadiumId, diffKey, len, golden, sizeKey,
+//        seats: [{key, side, idx?}], remotes: Map(seatKey→RemoteInput),
+//        lan, restore, onEnd }
 function startHostedMatch(cfg) {
   const teamADef = TEAMS[cfg.aIdx];
   const teamBDef = TEAMS[cfg.bIdx];
+  setField(cfg.sizeKey ?? '11');
   const base = buildScene(cfg.stadiumId);
   const trail = new BallTrail(base.scene);
-
-  const controlled = {
-    A: (cfg.hostSide === 'A' || cfg.remoteA) ? CONTROLLED_INDEX : null,
-    B: (cfg.hostSide === 'B' || cfg.remoteB) ? CONTROLLED_INDEX : null,
-  };
 
   const g = {
     kind: cfg.lan ? 'host' : 'sp',
     ...base, trail,
     paused: false, slow: -1, tabOpen: false,
     cfg,
+    remotes: cfg.remotes ?? new Map(),
     castT: 0,
   };
 
@@ -215,9 +266,11 @@ function startHostedMatch(cfg) {
     diffKey: cfg.diffKey,
     lengthMin: cfg.len,
     goldenGoal: cfg.golden,
-    controlled,
+    sizeKey: cfg.sizeKey ?? '11',
+    seats: cfg.seats,
     hooks: {
       banner: (text, ms) => { showBanner(text, ms); castAll({ k: 'banner', text, ms }); },
+      coach: (msg) => coachToast(msg),
       onGoal: (scorer, x, z, toucher) => {
         base.confetti.burst(x, z);
         base.sfx.goal(x);
@@ -238,6 +291,10 @@ function startHostedMatch(cfg) {
     },
   });
   match.setFirstKicker(match.teamA);
+  if (sel.neural && TRAINED_NET) {
+    match.teamA.policyNet = TRAINED_NET;
+    match.teamB.policyNet = TRAINED_NET;
+  }
   if (cfg.restore) match.restoreState(cfg.restore);
   base.cam.snap(match.ball);
 
@@ -255,7 +312,7 @@ function startHostedMatch(cfg) {
   return g;
 }
 
-function startSP(restore = null) {
+function startSP(restore = null, sizeKey = '11') {
   const aIdx = restore ? TEAMS.findIndex((t) => t.code === restore.a) : sel.teamA;
   let bIdx = restore ? TEAMS.findIndex((t) => t.code === restore.b) : sel.teamB;
   if (bIdx === 'random' || bIdx < 0) {
@@ -266,7 +323,9 @@ function startSP(restore = null) {
     stadiumId: restore?.stadium ?? sel.stadium,
     diffKey: restore?.diffKey ?? sel.diff,
     len: restore?.lengthMin ?? sel.len,
-    golden: false, hostSide: 'A', lan: false, restore,
+    golden: false, sizeKey,
+    seats: [{ key: 'H', side: 'A' }],
+    lan: false, restore,
     onEnd: (m) => {
       localStorage.removeItem('pp-save');
       const a = m.scoreA, b = m.scoreB;
@@ -302,16 +361,20 @@ $('btnQuitNoSave').onclick = () => {
 
 function openTabMenu() {
   if (!game) return;
-  let side, teamDef, players;
+  let seatKey, teamDef, players;
   if (game.kind === 'client') {
-    side = clientSide;
-    if (!side) return;
-    teamDef = side === 'A' ? clientFixture.aDef : clientFixture.bDef;
-    players = teamDef.xi.map(([num, name], i) => ({ num, name, i, role: i === 0 ? 'GK' : i < 5 ? 'DF' : i < 8 ? 'MF' : 'FW' }));
+    seatKey = String(myId);
+    if (!clientSide || clientFixture.mode !== '11') return;
+    teamDef = clientSide === 'A' ? clientFixture.aDef : clientFixture.bDef;
+    const lineup = buildLineup(teamDef, '11');
+    players = lineup.slots.map((s, i) => {
+      const [num, name] = teamDef.xi?.[s.xi] ?? [i + 1, `${teamDef.code} ${i + 1}`];
+      return { num, name, i, role: s.role };
+    });
   } else {
-    side = game.cfg.hostSide;
-    if (!side) return;
-    const team = game.match.team(side);
+    if (game.match.sizeKey !== '11' || !game.match.seats.H) return;
+    seatKey = 'H';
+    const team = game.match.team(game.match.seatSide.H);
     teamDef = team.def;
     players = team.players.map((p) => ({ num: p.num, name: p.name, i: p.idx, role: p.role }));
   }
@@ -325,7 +388,7 @@ function openTabMenu() {
     if (p.i === 0) { el.style.opacity = 0.4; el.style.cursor = 'default'; }
     else el.onclick = () => {
       if (game.kind === 'client') net?.sendInput({ e: [{ type: 'switchTo', idx: p.i }] });
-      else game.match.switchControlled(side, p.i);
+      else game.match.switchControlled('H', p.i);
       closeTabMenu();
     };
     grid.appendChild(el);
@@ -339,7 +402,7 @@ function closeTabMenu() {
 }
 $('tabMenu').onclick = (e) => { if (e.target.id === 'tabMenu') closeTabMenu(); };
 
-// --- LAN ------------------------------------------------------------------------
+// --- LAN (ws relay — needs the local Node server; WebRTC rooms coming) --------
 
 let net = null;
 let netRole = null;         // 'host' | 'client'
@@ -348,11 +411,9 @@ let roster = [];
 let myTeamPick = null;
 const remoteInputs = new Map();
 let cup = null;
-let hostFixture = null;     // {e1, e2} entrants for current LAN match
-let clientFixture = null;   // client-side: {aDef, bDef}
+let clientFixture = null;   // client-side: {aDef, bDef, mode}
 let clientSide = null;      // 'A' | 'B' | null
 let clientView = null;
-let lastSnapScore = null;
 
 $('btnLAN').onclick = () => {
   $('menu').classList.add('hidden');
@@ -370,6 +431,8 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   [...$('lanTeams').children].forEach((el, j) => el.classList.toggle('sel', j === i));
 });
 
+const NO_SERVER_MSG = 'Could not reach a room server. LAN play currently needs the Node server (npm start) — on the static site, multiplayer arrives with WebRTC rooms.';
+
 async function connectNet() {
   net = new Net();
   await net.connect();
@@ -380,7 +443,7 @@ async function connectNet() {
 
 $('btnHost').onclick = async () => {
   audio.init();
-  try { await connectNet(); } catch { $('lanError').textContent = 'Could not reach server'; return; }
+  try { await connectNet(); } catch { $('lanError').textContent = NO_SERVER_MSG; return; }
   netRole = 'host';
   net.on('created', (m) => {
     $('roomCode').textContent = m.code;
@@ -400,7 +463,7 @@ $('btnHost').onclick = async () => {
 
 $('btnJoin').onclick = async () => {
   audio.init();
-  try { await connectNet(); } catch { $('lanError').textContent = 'Could not reach server'; return; }
+  try { await connectNet(); } catch { $('lanError').textContent = NO_SERVER_MSG; return; }
   netRole = 'client';
   net.on('joined', (m) => {
     myId = m.id;
@@ -429,8 +492,6 @@ function renderRoster() {
 
 function castAll(d) { if (netRole === 'host' && net) net.cast(d); }
 
-function teamOf(entrant) { return entrant.team ?? ((Math.random() * TEAMS.length) | 0); }
-
 function backToRoom() {
   game = null;
   clientView = null;
@@ -455,28 +516,33 @@ function startLanMatch(e1, e2, golden, onEnd) {
   const used = usedTeams();
   if (e1.team == null) e1.team = randomFreeTeam(used);
   if (e2.team == null) e2.team = randomFreeTeam(used);
-  hostFixture = { e1, e2 };
 
-  const hostSide = e1.clientId === 0 ? 'A' : e2.clientId === 0 ? 'B' : null;
-  const remoteA = e1.clientId > 0 ? (remoteInputs.get(e1.clientId) ?? remoteInputs.set(e1.clientId, new RemoteInput()).get(e1.clientId)) : null;
-  const remoteB = e2.clientId > 0 ? (remoteInputs.get(e2.clientId) ?? remoteInputs.set(e2.clientId, new RemoteInput()).get(e2.clientId)) : null;
-
+  const seats = [];
+  const remotes = new Map();
   const sides = {};
-  if (e1.clientId > 0) sides[e1.clientId] = 'A';
-  if (e2.clientId > 0) sides[e2.clientId] = 'B';
+  for (const [e, side] of [[e1, 'A'], [e2, 'B']]) {
+    if (e.clientId === 0) seats.push({ key: 'H', side });
+    else if (e.clientId > 0) {
+      const key = String(e.clientId);
+      seats.push({ key, side });
+      let ri = remoteInputs.get(e.clientId);
+      if (!ri) { ri = new RemoteInput(); remoteInputs.set(e.clientId, ri); }
+      remotes.set(key, ri);
+      sides[e.clientId] = side;
+    }
+  }
+
   castAll({
-    k: 'fixture', a: e1.team, b: e2.team, stadium: sel.stadium, sides,
+    k: 'fixture', mode: '11', a: e1.team, b: e2.team, stadium: sel.stadium, sides,
     label: `${e1.name} (${TEAMS[e1.team].code})  vs  ${e2.name} (${TEAMS[e2.team].code})`,
   });
 
   startHostedMatch({
     aIdx: e1.team, bIdx: e2.team,
     stadiumId: sel.stadium, diffKey: sel.diff, len: sel.len,
-    golden, hostSide, remoteA, remoteB, lan: true,
+    golden, sizeKey: '11', seats, remotes, lan: true,
     onEnd,
   });
-  game.remoteA = remoteA;
-  game.remoteB = remoteB;
 }
 
 $('btnLan1v1').onclick = () => {
@@ -568,7 +634,7 @@ $('btnCupExit').onclick = () => { cup = null; $('bracketOverlay').classList.add(
 
 function bracketHTML() {
   let html = '';
-  cup.rounds.forEach((round, ri) => {
+  cup.rounds.forEach((round) => {
     const title = round.length === 1 ? 'Final' : round.length === 2 ? 'Semis' : round.length === 4 ? 'Quarters' : `Round of ${round.length * 2}`;
     html += `<div style="min-width:170px;"><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#9aa2b1;margin-bottom:6px;">${title}</div>`;
     for (const m of round) {
@@ -594,10 +660,11 @@ function castBracket(done = false) {
 function handleCast(d) {
   switch (d.k) {
     case 'fixture': {
-      clientFixture = { aDef: TEAMS[d.a], bDef: TEAMS[d.b] };
+      clientFixture = { aDef: TEAMS[d.a], bDef: TEAMS[d.b], mode: d.mode ?? '11' };
       clientSide = d.sides[myId] ?? null;
+      setField(clientFixture.mode);
       const base = buildScene(d.stadium);
-      clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientSide);
+      clientView = new NetView(base.scene, clientFixture.aDef, clientFixture.bDef, clientFixture.mode, String(myId));
       game = { kind: 'client', ...base, view: clientView, sendT: 0, tabOpen: false, slow: -1, paused: false };
       setScoreboard(clientFixture.aDef.code, clientFixture.aDef.shirt, clientFixture.bDef.code, clientFixture.bDef.shirt);
       $('lobby').classList.add('hidden');
@@ -610,7 +677,6 @@ function handleCast(d) {
       if (clientView) {
         clientView.applySnapshot(d);
         setScore(d.sc[0], d.sc[1], d.ck);
-        lastSnapScore = d.sc;
       }
       break;
     case 'banner': showBanner(d.text, d.ms); break;
@@ -690,9 +756,7 @@ function frame(now) {
     const md = game.view.minimapData();
     drawMinimapPts(md.a, md.b, md.ball, clientFixture.aDef.shirt, clientFixture.bDef.shirt,
       clientSide ? game.view.playerProxy.pos : null);
-    const chip = clientSide && game.view.snap
-      ? game.view.players[clientSide === 'A' ? game.view.snap.ctA : 11 + game.view.snap.ctB]?.name : '';
-    $('playerChip').textContent = chip || '';
+    $('playerChip').textContent = game.view.myName() ?? '';
     const charging = input.charging;
     $('powerwrap').style.opacity = charging ? 1 : 0;
     if (charging) $('powerbar').style.width = `${input.chargePower() * 100}%`;
@@ -708,28 +772,25 @@ function frame(now) {
     else if (game.slow > -0.25) { game.slow -= dt; scale = 0.7; }
     const simDt = dt * scale;
 
-    // route inputs/events per side
-    const hostSide = game.cfg.hostSide;
-    const inputs = { A: null, B: null };
-    const evmap = { A: [], B: [] };
-    if (hostSide) { inputs[hostSide] = input; evmap[hostSide] = gameplay; }
-    for (const [side, ri] of [['A', game.remoteA], ['B', game.remoteB]]) {
-      if (!ri) continue;
-      inputs[side] = ri;
-      const evts = ri.takeEvents();
-      for (const e of evts) {
-        if (e.type === 'switchTo') game.match.switchControlled(side, e.idx);
+    // route inputs/events per seat: 'H' is this keyboard, the rest are remote
+    const inputs = { H: input };
+    const evmap = { H: gameplay };
+    for (const [seatKey, ri] of game.remotes) {
+      inputs[seatKey] = ri;
+      evmap[seatKey] = [];
+      for (const e of ri.takeEvents()) {
+        if (e.type === 'switchTo') game.match.switchControlled(seatKey, e.idx);
         else if (e.type === 'tab' || e.type === 'camera' || e.type === 'pause' || e.type === 'help' || e.type === 'mute') continue;
-        else evmap[side].push(e);
+        else evmap[seatKey].push(e);
       }
     }
-    // host-side local tab switching handled via menu clicks; switch events from menu are immediate
 
     game.match.update(simDt, inputs, evmap);
     game.confetti.update(simDt);
     game.sfx.update(simDt);
     game.trail.update(game.match.ball, simDt);
-    game.cam.update(dt, game.match.ball, game.match.humans[hostSide ?? 'A'] ?? game.match.teamA.players[9]);
+    const hero = game.match.seats.H ?? game.match.teamA.players[game.match.teamA.kickerIdx];
+    game.cam.update(dt, game.match.ball, hero);
 
     // cast snapshots at 15Hz
     if (game.kind === 'host' && net) {
@@ -743,7 +804,7 @@ function frame(now) {
 
   const m = game.match;
   setScore(m.scoreA, m.scoreB, m.clockText());
-  const hp = game.cfg.hostSide ? m.humans[game.cfg.hostSide] : null;
+  const hp = m.seats.H ?? null;
   $('playerChip').textContent = hp ? `${hp.num} · ${hp.name}` : '';
   drawMinimapPts(
     m.teamA.players.map((p) => p.pos), m.teamB.players.map((p) => p.pos), m.ball.pos,
@@ -758,9 +819,9 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-// dev shortcut: ?autostart[&stadium=day|sunset|night]
+// dev shortcut: ?autostart[&stadium=day|sunset|night][&mode=3|5|11]
 const qs = new URLSearchParams(location.search);
 if (qs.has('autostart')) {
   if (qs.get('stadium')) sel.stadium = qs.get('stadium');
-  startSP();
+  startSP(null, qs.get('mode') ?? '11');
 }

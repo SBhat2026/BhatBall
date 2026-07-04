@@ -1,8 +1,28 @@
-export const FIELD = {
-  length: 105, width: 68,
-  halfL: 52.5, halfW: 34,
-  goalHalf: 3.66, goalHeight: 2.44, postR: 0.07,
+// FIELD is mutable so street modes can shrink the pitch before a match builds.
+// Everything reads it live; call setField() before constructing Match/stadium.
+export const FIELD_PRESETS = {
+  '11': {
+    length: 105, width: 68, goalHalf: 3.66, goalHeight: 2.44,
+    boxL: 16.5, boxHalfW: 20.15, penSpot: 11, sixL: 5.5, circleR: 9.15,
+  },
+  '5': {
+    length: 62, width: 40, goalHalf: 2.8, goalHeight: 2.2,
+    boxL: 9, boxHalfW: 12, penSpot: 7, sixL: 3, circleR: 5,
+  },
+  '3': {
+    length: 46, width: 30, goalHalf: 2.4, goalHeight: 2.05,
+    boxL: 7, boxHalfW: 9.5, penSpot: 6, sixL: 2.5, circleR: 4,
+  },
 };
+
+export const FIELD = { postR: 0.07 };
+export function setField(sizeKey = '11') {
+  Object.assign(FIELD, FIELD_PRESETS[sizeKey] ?? FIELD_PRESETS['11']);
+  FIELD.halfL = FIELD.length / 2;
+  FIELD.halfW = FIELD.width / 2;
+  FIELD.sizeKey = sizeKey;
+}
+setField('11');
 
 export const BALL = {
   r: 0.18, g: 9.81,
@@ -26,15 +46,6 @@ export const DIFFICULTY = {
 
 // Teammate AI on the user's team (fixed, independent of opponent difficulty)
 export const MATE_DIFF = { react: 0.14, speed: 0.96, passErr: 0.09, shootErr: 0.10, tackleAggro: 0.6 };
-
-// 4-3-3, team-local coords: x negative = own half, attack toward +x. [role, x, z]
-export const FORMATION = [
-  ['GK', -50, 0],
-  ['DF', -38, -22], ['DF', -40, -7.5], ['DF', -40, 7.5], ['DF', -38, 22],
-  ['MF', -22, -14], ['MF', -25, 0],    ['MF', -22, 14],
-  ['FW', -9, -20],  ['FW', -5, 0],     ['FW', -9, 20],
-];
-export const CONTROLLED_INDEX = 9; // center striker
 
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 export const damp = (k, dt) => 1 - Math.exp(-k * dt);

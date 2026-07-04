@@ -35,44 +35,46 @@ const matte = (c, extra = {}) => new THREE.MeshStandardMaterial({
   color: c, roughness: 0.95, metalness: 0, ...extra,
 });
 
+// apron of grass beyond the lines, matches the pitch plane in buildStadium
+export const PITCH_PAD = { x: 7.5, z: 8 };
+
 function pitchTexture(preset) {
+  const { halfL, halfW, goalHalf, boxL, boxHalfW, penSpot, sixL, circleR } = FIELD;
   const PXM = 12; // px per meter
-  const W = 120 * PXM, H = 84 * PXM;
+  const W = (halfL + PITCH_PAD.x) * 2 * PXM, H = (halfW + PITCH_PAD.z) * 2 * PXM;
   const cv = document.createElement('canvas');
   cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
-  const mx = (x) => (x + 60) * PXM;   // world x → px
-  const mz = (z) => (z + 42) * PXM;   // world z → px
+  const mx = (x) => (x + halfL + PITCH_PAD.x) * PXM;   // world x → px
+  const mz = (z) => (z + halfW + PITCH_PAD.z) * PXM;   // world z → px
 
   ctx.fillStyle = preset.grassA;
   ctx.fillRect(0, 0, W, H);
   // mowing stripes
   ctx.fillStyle = preset.grassB;
+  const stripeW = (halfL * 2) / 10;
   for (let i = 0; i < 10; i++) {
-    if (i % 2 === 0) ctx.fillRect(mx(-52.5 + i * 10.5), mz(-42), 10.5 * PXM, 84 * PXM);
+    if (i % 2 === 0) ctx.fillRect(mx(-halfL + i * stripeW), 0, stripeW * PXM, H);
   }
 
-  const { halfL, halfW, goalHalf } = FIELD;
   ctx.strokeStyle = preset.line;
   ctx.lineWidth = 0.14 * PXM;
   const rect = (x1, z1, x2, z2) => ctx.strokeRect(mx(x1), mz(z1), (x2 - x1) * PXM, (z2 - z1) * PXM);
 
   rect(-halfL, -halfW, halfL, halfW);                    // border
   ctx.beginPath(); ctx.moveTo(mx(0), mz(-halfW)); ctx.lineTo(mx(0), mz(halfW)); ctx.stroke();
-  ctx.beginPath(); ctx.arc(mx(0), mz(0), 9.15 * PXM, 0, 6.29); ctx.stroke();
+  ctx.beginPath(); ctx.arc(mx(0), mz(0), circleR * PXM, 0, 6.29); ctx.stroke();
   ctx.beginPath(); ctx.arc(mx(0), mz(0), 0.25 * PXM, 0, 6.29); ctx.fillStyle = preset.line; ctx.fill();
 
   for (const s of [-1, 1]) {
     const gl = s * halfL;
-    rect(gl, -20.15, gl - s * 16.5, 20.15);              // penalty box
-    rect(gl, -goalHalf - 5.5, gl - s * 5.5, goalHalf + 5.5); // six-yard
-    ctx.beginPath(); ctx.arc(mx(gl - s * 11), mz(0), 0.25 * PXM, 0, 6.29); ctx.fill(); // spot
-    ctx.beginPath();                                      // D arc
-    ctx.arc(mx(gl - s * 11), mz(0), 9.15 * PXM, 0, 6.29);
-    ctx.save();
-    ctx.beginPath(); ctx.rect(mx(gl - s * 16.5) - (s > 0 ? 9.15 * PXM : 0), mz(-10), 9.15 * PXM, 20 * PXM);
+    rect(gl, -boxHalfW, gl - s * boxL, boxHalfW);        // penalty box
+    rect(gl, -goalHalf - sixL, gl - s * sixL, goalHalf + sixL); // six-yard
+    ctx.beginPath(); ctx.arc(mx(gl - s * penSpot), mz(0), 0.25 * PXM, 0, 6.29); ctx.fill(); // spot
+    ctx.save();                                           // D arc
+    ctx.beginPath(); ctx.rect(mx(gl - s * boxL) - (s > 0 ? circleR * PXM : 0), mz(-boxHalfW), circleR * PXM, boxHalfW * 2 * PXM);
     ctx.clip();
-    ctx.beginPath(); ctx.arc(mx(gl - s * 11), mz(0), 9.15 * PXM, 0, 6.29); ctx.stroke();
+    ctx.beginPath(); ctx.arc(mx(gl - s * penSpot), mz(0), circleR * PXM, 0, 6.29); ctx.stroke();
     ctx.restore();
     // corner arcs
     for (const sz of [-1, 1]) {
@@ -361,7 +363,7 @@ export function buildStadium(scene, preset) {
 
   // pitch
   const pitch = new THREE.Mesh(
-    new THREE.PlaneGeometry(120, 84),
+    new THREE.PlaneGeometry((FIELD.halfL + PITCH_PAD.x) * 2, (FIELD.halfW + PITCH_PAD.z) * 2),
     new THREE.MeshStandardMaterial({ map: pitchTexture(preset), roughness: 1, metalness: 0 }),
   );
   pitch.rotation.x = -Math.PI / 2;

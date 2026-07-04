@@ -3,28 +3,32 @@ import * as THREE from 'three';
 import { BALL } from './config.js';
 import { SKIN_TONES } from './teams.js';
 import { buildRig, animateRig } from './rig.js';
+import { buildLineup } from './tactics.js';
 
 export class NetView {
-  constructor(scene, teamADef, teamBDef, mySide) {
+  constructor(scene, teamADef, teamBDef, mode, myKey) {
     this.scene = scene;
-    this.mySide = mySide; // 'A' | 'B' | null (spectator)
+    this.myKey = myKey ?? null; // seat key ('H' or String(clientId)); null = spectator
     this.players = [];
     this.defs = { A: teamADef, B: teamBDef };
 
-    for (const [def, count] of [[teamADef, 11], [teamBDef, 11]]) {
-      for (let i = 0; i < count; i++) {
-        const isGK = i === 0;
+    const sizeKey = mode ?? '11';
+    for (const def of [teamADef, teamBDef]) {
+      const lineup = buildLineup(def, sizeKey);
+      lineup.slots.forEach((slot, i) => {
+        const isGK = slot.role === 'GK';
         const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
-        const entry = def.xi?.[i] ?? [i + 1, `${def.code} ${i + 1}`];
+        const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
         const rig = buildRig(def, skin, isGK, { number: entry[0], captain: i === 6 });
         this.scene.add(rig.group);
         this.players.push({
           rig,
           name: entry[1],
-          cur: new THREE.Vector3(), tgt: new THREE.Vector3(),
+          cur: new THREE.Vector3(slot.x, 0, slot.z), tgt: new THREE.Vector3(slot.x, 0, slot.z),
           rotY: 0, speed: 0, fx: 0,
         });
-      }
+      });
+      if (def === teamADef) this.aCount = lineup.slots.length;
     }
 
     this.ballMesh = new THREE.Mesh(
@@ -48,6 +52,17 @@ export class NetView {
     // ball proxy so GameCamera can follow it
     this.ballProxy = { pos: this.ballCur };
     this.playerProxy = { pos: new THREE.Vector3(), heading: new THREE.Vector3(1, 0, 0) };
+  }
+
+  myIdx() {
+    const ct = this.snap?.ct;
+    if (!ct || this.myKey == null || !(this.myKey in ct)) return -1;
+    return ct[this.myKey];
+  }
+
+  myName() {
+    const i = this.myIdx();
+    return i >= 0 ? this.players[i]?.name ?? null : null;
   }
 
   applySnapshot(s) {
@@ -80,22 +95,19 @@ export class NetView {
     this.ballCur.lerp(this.ballTgt, 1 - Math.exp(-18 * dt));
     this.ballMesh.position.copy(this.ballCur);
 
-    if (this.snap) {
-      const myIdx = this.mySide === 'A' ? this.snap.ctA : this.mySide === 'B' ? 11 + this.snap.ctB : -1;
-      const me = myIdx >= 0 ? this.players[myIdx] : null;
-      this.marker.visible = !!me;
-      if (me) {
-        this.marker.position.set(me.cur.x, 0.06, me.cur.z);
-        this.playerProxy.pos.copy(me.cur);
-      }
+    const me = this.myIdx() >= 0 ? this.players[this.myIdx()] : null;
+    this.marker.visible = !!me;
+    if (me) {
+      this.marker.position.set(me.cur.x, 0.06, me.cur.z);
+      this.playerProxy.pos.copy(me.cur);
     }
   }
 
   // minimal minimap data provider matching drawMinimap's expectations
   minimapData() {
     return {
-      a: this.players.slice(0, 11).map((p) => p.cur),
-      b: this.players.slice(11).map((p) => p.cur),
+      a: this.players.slice(0, this.aCount).map((p) => p.cur),
+      b: this.players.slice(this.aCount).map((p) => p.cur),
       ball: this.ballCur,
     };
   }

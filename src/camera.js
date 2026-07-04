@@ -1,5 +1,11 @@
 import * as THREE from 'three';
-import { clamp, damp } from './config.js';
+import { FIELD, clamp, damp } from './config.js';
+
+// broadcast framing scales with the pitch so street modes sit closer in
+function frame() {
+  const k = FIELD.halfW / 34; // 1.0 on the full pitch
+  return { y: 17 * (0.55 + 0.45 * k), z: 33 * (0.55 + 0.45 * k), xCap: FIELD.halfL - 10.5 };
+}
 
 export class GameCamera {
   constructor(camera) {
@@ -22,7 +28,8 @@ export class GameCamera {
   punch() { this.punchT = 0.8; } // brief zoom-in for skill drama
 
   snap(ball) {
-    this.pos.set(clamp(ball.pos.x * 0.85, -42, 42), 17, 33);
+    const f = frame();
+    this.pos.set(clamp(ball.pos.x * 0.85, -f.xCap, f.xCap), f.y, f.z);
     this.look.set(ball.pos.x * 0.9, 2.4, ball.pos.z * 0.5);
     this.camera.position.copy(this.pos);
     this.camera.lookAt(this.look);
@@ -33,7 +40,8 @@ export class GameCamera {
     const tLook = new THREE.Vector3();
 
     if (this.mode === 'broadcast') {
-      tPos.set(clamp(ball.pos.x * 0.85, -42, 42), 17, 33);
+      const f = frame();
+      tPos.set(clamp(ball.pos.x * 0.85, -f.xCap, f.xCap), f.y, f.z);
       tLook.set(ball.pos.x * 0.9, 2.4, ball.pos.z * 0.5);
       this.pos.lerp(tPos, damp(3.2, dt));
       this.look.lerp(tLook, damp(4.5, dt));

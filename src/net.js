@@ -72,13 +72,18 @@ export function encodeSnapshot(match) {
     }
   }
   const b = match.ball;
+  // controlled map: seatKey → global player index (A players first, then B)
+  const aCount = match.teamA.players.length;
+  const ct = {};
+  for (const [key, p] of Object.entries(match.seats)) {
+    ct[key] = p.team.key === 'B' ? aCount + p.idx : p.idx;
+  }
   return {
     k: 'snap',
     p: players,
     b: [r2(b.pos.x), r2(b.pos.y), r2(b.pos.z)],
     sc: [match.scoreA, match.scoreB],
     ck: match.clockText(),
-    ctA: match.humans.A ? match.humans.A.idx : -1,
-    ctB: match.humans.B ? match.humans.B.idx : -1,
+    ct,
   };
 }
