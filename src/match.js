@@ -347,7 +347,7 @@ export class Match {
       t.heading.set(0, 0, -Math.sign(t.pos.z) || 1);
       t.rig.group.rotation.y = Math.atan2(t.heading.x, t.heading.z);
       t.rig.holdBall = true;
-      this.ball.pos.set(t.pos.x + t.heading.x * 0.12, 2.02, t.pos.z + t.heading.z * 0.12);
+      this.ball.pos.set(t.pos.x + t.heading.x * 0.12, 1.82, t.pos.z + t.heading.z * 0.12);
       this.ball.vel.set(0, 0, 0);
     }
     this.ball.mesh.position.copy(this.ball.pos);
@@ -393,10 +393,10 @@ export class Match {
     const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
     const T = clamp(d / 13, 0.45, 1.15);
     const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
-    const vy = (BALL.g * T) / 2 - 1.8 / T; // released ~2m up, arrives at the grass
+    const vy = (BALL.g * T) / 2 - 1.65 / T; // released ~1.8m up, arrives at the grass
     h.rig.holdBall = false;
     h.rig.throwT = 0.45;
-    this.ball.pos.set(h.pos.x + h.heading.x * 0.2, 2.02, h.pos.z + h.heading.z * 0.2);
+    this.ball.pos.set(h.pos.x + h.heading.x * 0.2, 1.82, h.pos.z + h.heading.z * 0.2);
     this.ball.kick(h, _v.set(vx, vy, vz), null);
     h.touchCd = 0.15;
     if (mate) this.ball.intendedReceiver = mate;

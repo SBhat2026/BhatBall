@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import { PLAYER } from './config.js';
 
 // Low-poly player: hex-cylinder torso, icosphere head, jointed box limbs
 // (hip/knee, shoulder/elbow). Matte pastel materials.
 // Kits can carry a torso pattern (Argentina stripes, Croatia checkers).
+// The whole rig renders at PLAYER.vis scale — proportions untouched.
 
 const HAIR_COLORS = ['#2e2a28', '#4a3826', '#7a5a38', '#c9b18a', '#5a5f6b'];
 const numberTexCache = new Map();
@@ -158,16 +160,19 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
 
   if (opts.captain) add(new THREE.BoxGeometry(0.15, 0.09, 0.15), mat('#f0c890'), 0, -0.14, 0, armL);
 
-  // floating name tag above the head (billboard sprite, subtle)
+  // floating name tag above the head (billboard sprite, subtle);
+  // counter-scaled so tag legibility doesn't shrink with the rig
   if (opts.name && canPaint) {
     const tag = new THREE.Sprite(new THREE.SpriteMaterial({
       map: nameTexture(opts.name), transparent: true, opacity: 0.82, depthWrite: false,
     }));
-    tag.scale.set(1.9, 0.48, 1);
+    tag.scale.set(1.9 / (PLAYER.vis ?? 1), 0.48 / (PLAYER.vis ?? 1), 1);
     tag.position.set(0, 2.32, 0);
     tag.renderOrder = 5;
     g.add(tag);
   }
+
+  g.scale.setScalar(PLAYER.vis ?? 1);
 
   return {
     group: g, torso,

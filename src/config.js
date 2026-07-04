@@ -1,16 +1,19 @@
 // FIELD is mutable so street modes can shrink the pitch before a match builds.
 // Everything reads it live; call setField() before constructing Match/stadium.
+// Goals run ~9% wider/taller than regulation: the stylized rigs read chunkier
+// than 1.8m humans, so real-scale goals looked toy-sized next to them
+// (paired with PLAYER.vis shrinking the rigs — see below).
 export const FIELD_PRESETS = {
   '11': {
-    length: 105, width: 68, goalHalf: 3.66, goalHeight: 2.44,
+    length: 105, width: 68, goalHalf: 4.0, goalHeight: 2.62,
     boxL: 16.5, boxHalfW: 20.15, penSpot: 11, sixL: 5.5, circleR: 9.15,
   },
   '5': {
-    length: 62, width: 40, goalHalf: 2.8, goalHeight: 2.2,
+    length: 62, width: 40, goalHalf: 3.0, goalHeight: 2.35,
     boxL: 9, boxHalfW: 12, penSpot: 7, sixL: 3, circleR: 5,
   },
   '3': {
-    length: 46, width: 30, goalHalf: 2.4, goalHeight: 2.05,
+    length: 46, width: 30, goalHalf: 2.55, goalHeight: 2.15,
     boxL: 7, boxHalfW: 9.5, penSpot: 6, sixL: 2.5, circleR: 4,
   },
 };
@@ -36,6 +39,7 @@ export const PLAYER = {
   speed: 7.0, sprint: 9.3,
   kickRange: 1.55, controlRange: 1.35,
   height: 1.8,
+  vis: 0.88, // visual rig scale only — physics/ranges stay in true meters
 };
 
 export const DIFFICULTY = {
