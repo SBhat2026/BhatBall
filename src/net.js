@@ -25,6 +25,7 @@ export class Net {
   }
 
   on(t, fn) { this.handlers[t] = fn; }
+  close() { this.ws?.close(); }
   send(obj) { if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(obj)); }
 
   create(name, team) { this.send({ t: 'create', name, team }); }

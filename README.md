@@ -51,7 +51,13 @@ Then open **http://localhost:8000** in your browser. (`python3` is preinstalled 
 
 ## 🌐 Multiplayer
 
-LAN rooms (1v1 and a 16-team knockout cup) currently need the optional Node server (`npm install && npm start` on one machine on the network). Serverless online multiplayer via WebRTC — including new 3v3 and 5v5 street modes — is in the works and will run on the same static site above.
+Click **🌐 Online Room** — no server needed. Rooms connect peer-to-peer over WebRTC: the host gets a 4-letter code, friends type it in from anywhere (works on the static site above, including school Macs).
+
+- **⚔️ 1v1** — host vs first joiner, full 11v11.
+- **🏆 Knockout Cup** — every human seeded into a golden-goal bracket, CPU nations fill the rest.
+- **🛹 3v3 / ⚡ 5v5 street** — small pitch, one player per person, bot goalkeepers, AI fills empty spots. Extra joiners spectate.
+
+(If you're offline on a shared LAN, the old relay still works: `npm install && npm start` on one machine, then open its address with `?ws` added to the URL.)
 
 ## License
 

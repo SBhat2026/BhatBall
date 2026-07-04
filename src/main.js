@@ -12,6 +12,7 @@ import { Match } from './match.js';
 import { GameCamera } from './camera.js';
 import { AudioEngine } from './audio.js';
 import { Net, RemoteInput, encodeSnapshot } from './net.js';
+import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
 import { TRAINED_NET } from './policy.js';
 
@@ -402,7 +403,7 @@ function closeTabMenu() {
 }
 $('tabMenu').onclick = (e) => { if (e.target.id === 'tabMenu') closeTabMenu(); };
 
-// --- LAN (ws relay — needs the local Node server; WebRTC rooms coming) --------
+// --- Online rooms (WebRTC peer-to-peer by default; ?ws forces the LAN relay) --
 
 let net = null;
 let netRole = null;         // 'host' | 'client'
@@ -422,8 +423,8 @@ $('btnLAN').onclick = () => {
   $('lobbyRoom').classList.add('hidden');
   $('lanError').textContent = '';
 };
-$('btnLobbyBack').onclick = () => { net?.ws?.close(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
-$('btnLeaveRoom').onclick = () => { net?.ws?.close(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
+$('btnLobbyBack').onclick = () => { net?.close?.(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
+$('btnLeaveRoom').onclick = () => { net?.close?.(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
 
 buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   myTeamPick = i;
@@ -431,10 +432,10 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   [...$('lanTeams').children].forEach((el, j) => el.classList.toggle('sel', j === i));
 });
 
-const NO_SERVER_MSG = 'Could not reach a room server. LAN play currently needs the Node server (npm start) — on the static site, multiplayer arrives with WebRTC rooms.';
+const NO_SERVER_MSG = 'Could not start a room — check your internet connection and try again.';
 
 async function connectNet() {
-  net = new Net();
+  net = new URLSearchParams(location.search).has('ws') ? new Net() : new RtcNet();
   await net.connect();
   net.on('err', (m) => { $('lanError').textContent = m.msg; });
   net.on('roster', (m) => { roster = m.roster; renderRoster(); });
@@ -545,6 +546,16 @@ function startLanMatch(e1, e2, golden, onEnd) {
   });
 }
 
+function friendlyEnd(m) {
+  castAll({ k: 'end', text: `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}` });
+  $('endTitle').textContent = 'FULL-TIME';
+  $('endScore').textContent = `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}`;
+  $('endNote').textContent = 'Friendly over — back to the room.';
+  $('endscreen').classList.remove('hidden');
+  $('btnRematch').style.display = 'none';
+  setTimeout(() => { $('endscreen').classList.add('hidden'); $('btnRematch').style.display = ''; backToRoom(); }, 3500);
+}
+
 $('btnLan1v1').onclick = () => {
   const joiner = roster.find((r) => r.id !== 0);
   if (!joiner) { showBanner('NEED A JOINER', 1500); return; }
@@ -553,18 +564,54 @@ $('btnLan1v1').onclick = () => {
   startLanMatch(
     { name: me.name, team: me.team, clientId: 0 },
     { name: joiner.name, team: joiner.team, clientId: joiner.id },
-    false,
-    (m) => {
-      castAll({ k: 'end', text: `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}` });
-      $('endTitle').textContent = 'FULL-TIME';
-      $('endScore').textContent = `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}`;
-      $('endNote').textContent = 'Friendly over — back to the room.';
-      $('endscreen').classList.remove('hidden');
-      $('btnRematch').style.display = 'none';
-      setTimeout(() => { $('endscreen').classList.add('hidden'); $('btnRematch').style.display = ''; backToRoom(); }, 3500);
-    },
+    false, friendlyEnd,
   );
 };
+
+// --- host: street modes (3v3 / 5v5) — one player per person, bot GKs ---------
+
+function startStreetMatch(sizeKey) {
+  const perSide = sizeKey === '3' ? 3 : 5;
+  cup = null;
+  const humans = roster.slice(0, perSide * 2); // overflow spectates
+  const seats = [];
+  const remotes = new Map();
+  const sides = {};
+  const counts = { A: 0, B: 0 };
+  const pick = { A: null, B: null };
+  for (const r of humans) {
+    const side = counts.A <= counts.B ? 'A' : 'B'; // alternate in join order
+    const idx = 1 + counts[side]++;               // street slot 0 is the bot GK
+    if (pick[side] == null && r.team != null) pick[side] = r.team;
+    if (r.id === 0) seats.push({ key: 'H', side, idx });
+    else {
+      seats.push({ key: String(r.id), side, idx });
+      let ri = remoteInputs.get(r.id);
+      if (!ri) { ri = new RemoteInput(); remoteInputs.set(r.id, ri); }
+      remotes.set(String(r.id), ri);
+      sides[r.id] = side;
+    }
+  }
+  const used = usedTeams();
+  const a = pick.A ?? randomFreeTeam(used);
+  used.add(a);
+  let b = pick.B;
+  if (b == null || b === a) b = randomFreeTeam(used);
+
+  castAll({
+    k: 'fixture', mode: sizeKey, a, b, stadium: sel.stadium, sides,
+    label: `${perSide}v${perSide} STREET · ${TEAMS[a].code} vs ${TEAMS[b].code}`,
+  });
+  startHostedMatch({
+    aIdx: a, bIdx: b,
+    stadiumId: sel.stadium, diffKey: sel.diff, len: sel.len,
+    golden: false, sizeKey, seats, remotes, lan: true,
+    onEnd: friendlyEnd,
+  });
+}
+
+$('btnLan3v3').onclick = () => startStreetMatch('3');
+$('btnLan5v5').onclick = () => startStreetMatch('5');
 
 // --- host: knockout cup ------------------------------------------------------------
 

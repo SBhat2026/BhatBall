@@ -183,16 +183,16 @@
         <button id="btnStart">Kick Off ▸</button>
         <button class="ghost" id="btnResume" style="display:none">▶ Resume saved match</button>
         <button class="ghost" id="btnWC">🏆 World Cup</button>
-        <button class="ghost" id="btnLAN">🌐 LAN Room</button>
+        <button class="ghost" id="btnLAN">🌐 Online Room</button>
       </div>
     </div>
   </div>
 
   <div id="lobby" class="overlay hidden">
     <div class="card" style="max-width:640px;">
-      <h1 style="font-size:26px;">🌐 LAN Room</h1>
+      <h1 style="font-size:26px;">🌐 Online Room</h1>
       <div id="lobbyChoice">
-        <div class="sub">Everyone must be on the same network, pointed at this machine's address (shown in the server terminal).</div>
+        <div class="sub">Rooms connect peer-to-peer — host one and share the 4-letter code with friends anywhere.</div>
         <h2>Your name</h2>
         <input id="lanName" maxlength="14" placeholder="Player name"
           style="font:inherit;padding:10px 14px;border-radius:12px;border:2px solid #edf0f5;width:220px;" />
@@ -215,9 +215,11 @@
           <div class="btnRow">
             <button id="btnLan1v1">⚔️ 1v1 vs first joiner</button>
             <button id="btnLanCup">🏆 Knockout Cup</button>
+            <button class="ghost" id="btnLan3v3">🛹 3v3 street</button>
+            <button class="ghost" id="btnLan5v5">⚡ 5v5 street</button>
             <button class="ghost" id="btnLeaveRoom">Leave</button>
           </div>
-          <div class="sub">Cup seeds every human, fills the bracket with CPU nations, and uses golden-goal — no draws.</div>
+          <div class="sub">Cup seeds every human, fills the bracket with CPU nations, and uses golden-goal — no draws. Street modes: one player per person on a small pitch, bot goalkeepers, AI fills empty spots.</div>
         </div>
         <div id="clientWait" class="hidden sub" style="margin-top:12px;">Waiting for the host to start…</div>
       </div>
@@ -277,6 +279,7 @@
     </div>
   </div>
 
+  <script src="./vendor/peerjs.min.js"></script>
   <script type="importmap">
     { "imports": {
       "three": "./vendor/three.module.js",
