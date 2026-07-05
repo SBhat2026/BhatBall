@@ -94,6 +94,7 @@ export class Match {
       def, dir, diff, key, kit: kit ?? def, players: [],
       style: lineup.style, baseStyle: { ...lineup.style }, kickerIdx: lineup.kicker,
       mood: 0, moodRegime: 'level', buildupT: 0,
+      intent: 'balance', assignT: 0,
       adapt: { shiftZ: 0, closeDown: 0, lineDrop: 0, wideDeep: 0, tackleBoost: 0 },
       policyNet: null,
     };
