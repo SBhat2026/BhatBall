@@ -126,6 +126,19 @@ const BANK = {
       'The pitch looks immaculate today.',
       'You can hear the away support from here.',
     ],
+    aside_goal: [
+      'Look at the movement again — that\'s well worked, Peter.',
+      'The defending will disappoint the coach, but you have to credit the finish.',
+      'That\'s been coming, in truth. They\'ve carried the greater threat.',
+    ],
+    aside_save: [
+      'Textbook positioning — he made that look easier than it was.',
+      'Big keepers make big saves at big moments. Simple as that.',
+    ],
+    aside_miss: [
+      'He\'ll want that one back. You must hit the target from there.',
+      'Good chance, that. The coach will note it down.',
+    ],
   },
   hype: {
     kickoff: [
@@ -166,6 +179,18 @@ const BANK = {
     blowout: ['This is a FIESTA for {team}!'],
     cagey: ['Mucho respeto between these two — nobody blinks.'],
     filler: ['Qué ambiente in this stadium tonight!', 'The fans are singing, señores — this is fútbol!'],
+    aside_goal: [
+      'Andrés, my heart! Watch the replay — pura magia, no defense in the world stops that!',
+      'They practice this, eh? Beautiful movement, beautiful gol!',
+    ],
+    aside_save: [
+      'You do not score past him tonight, amigo. NO tonight!',
+      'Frame it! Put that save in a museum!',
+    ],
+    aside_miss: [
+      '¡Increíble que no entró! The goal was BEGGING for it!',
+      'He will dream of that one, te lo juro.',
+    ],
   },
   dry: {
     kickoff: [
@@ -207,6 +232,19 @@ const BANK = {
     blowout: ['This one\'s decided. We\'re all just being polite now.'],
     cagey: ['Riveting stuff. Two teams, zero risk appetite.'],
     filler: ['The grass is green. The ball is round. We continue.', 'Lovely evening for standing around a lawn.'],
+    aside_goal: [
+      'Replay confirms it: the defense was elsewhere. Possibly getting snacks.',
+      'Statistically, someone was going to score eventually. Here we are.',
+      'Clean strike. The goalkeeper\'s commute just got longer.',
+    ],
+    aside_save: [
+      'That save just earned someone a contract extension.',
+      'The shooter did everything right except account for the goalkeeper.',
+    ],
+    aside_miss: [
+      'The data says shoot from there. The data did not say shoot like that.',
+      'That miss will feature in the team meeting. Prominently.',
+    ],
   },
 };
 
@@ -335,6 +373,7 @@ export class Booth {
 
   detach() {
     this.match = null;
+    clearTimeout(this._asideT);
     this._stopSpeech();
     this._hideTicker();
     this.audio.duckCrowd(1);
@@ -429,6 +468,27 @@ export class Booth {
     this.sum.epoch++; // key moments invalidate any pending model color
     const line = pickLine(this.mode, type, this._slots(extra), this.recent, this.openers);
     if (line) this._say(line, 'pbp', true);
+    // two-man booth: the analyst weighs in after the big moments
+    const aside = type.startsWith('goal') ? 'aside_goal'
+      : type === 'save_big' ? 'aside_save'
+      : type === 'nearMiss' || type === 'woodwork' ? 'aside_miss' : null;
+    if (aside && !(type === 'nearMiss' && Math.random() < 0.5)) this._queueAside(aside, extra);
+  }
+
+  _queueAside(type, extra, tries = 3) {
+    const keyAt = this.lastKeyAt;
+    clearTimeout(this._asideT);
+    this._asideT = setTimeout(() => {
+      // still the same moment? (no newer key line, booth on, match attached)
+      if (this.mode === 'off' || !this.match || this.lastKeyAt !== keyAt) return;
+      if (this.speaking) {
+        // play-by-play still talking — wait for the mic, don't drop the aside
+        if (tries > 0) this._queueAside(type, extra, tries - 1);
+        return;
+      }
+      const line = pickLine(this.mode, type, this._slots(extra), this.recent, this.openers);
+      if (line) this._say(line, 'ana', false);
+    }, tries === 3 ? 3400 : 1800);
   }
 
   // ---- build-up color ------------------------------------------------------------
@@ -599,7 +659,7 @@ export class Booth {
       u.onerror = done;
       // belt & braces: some engines drop onend
       clearTimeout(this._sayT);
-      this._sayT = setTimeout(done, 1500 + line.length * 75);
+      this._sayT = setTimeout(done, 1000 + line.length * 60);
       speechSynthesis.speak(u);
     } catch {
       this.speaking = false;
