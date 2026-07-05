@@ -148,6 +148,7 @@ export class Ball {
             if (dot < 0) {
               this.vel.x -= 1.7 * dot * nx;
               this.vel.z -= 1.7 * dot * nz;
+              this.frameHit = true; // booth: "off the post!"
             }
           }
         }
@@ -163,6 +164,7 @@ export class Ball {
           if (dot < 0) {
             this.vel.x -= 1.7 * dot * nx;
             this.vel.y -= 1.7 * dot * ny;
+            this.frameHit = true; // booth: "off the bar!"
           }
         }
       }

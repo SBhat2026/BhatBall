@@ -15,6 +15,7 @@ import { AudioEngine } from './audio.js';
 import { Net, RemoteInput, encodeSnapshot, rigFx } from './net.js';
 import { BALL_STYLES, getWins, addWin, isUnlocked, currentBallId, setBallId, previewURL } from './balls.js';
 import { flagURL, flagHTML } from './flags.js';
+import { Booth } from './commentary.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
 import { animateRig } from './rig.js';
@@ -53,6 +54,8 @@ function makeComposer(scene, preset) {
 
 const input = new Input();
 const audio = new AudioEngine();
+const booth = new Booth(audio);
+booth.initUI(document.getElementById('micBtn'), document.getElementById('micMode'), document.getElementById('ticker'));
 
 // mouse → pitch-plane aim point (fills input.aim for pass/shot targeting)
 const aimRaycaster = new THREE.Raycaster();
@@ -275,6 +278,7 @@ $('btnResume').onclick = () => {
 
 function toMenu() {
   game = null;
+  booth.detach();
   $('hud').classList.add('hidden');
   $('pauseMenu').classList.add('hidden');
   $('tabMenu').classList.add('hidden');
@@ -516,12 +520,14 @@ function startHostedMatch(cfg) {
     hooks: {
       banner: (text, ms) => { showBanner(text, ms); castAll({ k: 'banner', text, ms }); },
       coach: (msg) => coachToast(msg),
+      evt: (t, d) => booth.evt(t, d),
       onGoal: (scorer, x, z, toucher) => {
         base.confetti.burst(x, z);
         base.sfx.goal(x);
         base.cam.shake();
         audio.roar();
         const og = toucher && toucher.team !== scorer;
+        booth.evt('goal', { scorer, toucher, og });
         const who = toucher ? `  —  ${toucher.name}${og ? ' (OG)' : ''}` : '';
         showBanner(`GOAL!  ${scorer.def.code}${who}`, 2600);
         castAll({ k: 'goal', x, z, text: `GOAL!  ${scorer.def.code}${who}` });
@@ -563,6 +569,9 @@ function startHostedMatch(cfg) {
 
   g.match = match;
   game = g;
+  booth.attach(match);
+  // the constructor inlines the first kickoff, so announce it here
+  booth.evt('kickoff', { first: !cfg.restore });
   return g;
 }
 
@@ -835,6 +844,7 @@ function castAll(d) { if (netRole === 'host' && net) net.cast(d); }
 
 function backToRoom() {
   game = null;
+  booth.detach();
   clientView = null;
   $('hud').classList.add('hidden');
   $('pauseMenu').classList.add('hidden');
@@ -1124,7 +1134,7 @@ function frame(now) {
     if (e.type === 'skip') { if (game.replay) endReplay(game); }
     else if (e.type === 'camera') game.cam.toggle();
     else if (e.type === 'help') $('helpPanel').classList.toggle('hidden');
-    else if (e.type === 'mute') showBanner(audio.toggleMute() ? 'MUTED' : 'SOUND ON', 900);
+    else if (e.type === 'mute') { showBanner(audio.toggleMute() ? 'MUTED' : 'SOUND ON', 900); booth.syncMute(); }
     else if (e.type === 'tab') game.tabOpen ? closeTabMenu() : openTabMenu();
     else if (e.type === 'pause') {
       if (game.replay) endReplay(game);
@@ -1221,6 +1231,8 @@ function frame(now) {
     }
   }
 
+  booth.update(dt, !game.paused && !game.replay && !game.tabOpen && game.match.state === 'PLAY');
+
   const m = game.match;
   setScore(m.scoreA, m.scoreB, m.clockText());
   const hp = m.seats.H ?? null;
@@ -1239,7 +1251,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // dev/test hook: reach the live game from the console
-window.pp = { get game() { return game; }, get wc() { return wc; } };
+window.pp = { get game() { return game; }, get wc() { return wc; }, booth };
 
 // dev shortcut: ?autostart[&stadium=day|sunset|night][&mode=3|5|11]
 const qs = new URLSearchParams(location.search);

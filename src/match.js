@@ -194,6 +194,7 @@ export class Match {
     this.setPiece = null;
     this.pendingStrike = null;
     this.hooks.sfx?.('whistle', 1);
+    this.hooks.evt?.('kickoff', { first: this.elapsed === 0 && this.scoreA + this.scoreB === 0 });
   }
 
   kickBall(p, vx, vy, vz, spin, isDribble = false, isShot = false) {
@@ -202,6 +203,18 @@ export class Match {
     if (isDribble) p.kickCd = 0;
     p.touchCd = isDribble ? 0.16 : 0.1;
     const sp = Math.hypot(vx, vy, vz);
+    if (isShot && this.hooks.evt) {
+      // commentary tap: distance/angle/blockers feed the xG read
+      const goalX = p.team.dir * FIELD.halfL;
+      const dGoal = Math.hypot(goalX - p.pos.x, p.pos.z);
+      let blockers = 0;
+      for (const o of this.opponentsOf(p.team)) {
+        if (o.isGK) continue;
+        const along = (o.pos.x - p.pos.x) * p.team.dir;
+        if (along > 0.5 && along < dGoal && Math.abs(o.pos.z - p.pos.z * (1 - along / dGoal)) < 1.6) blockers++;
+      }
+      this.hooks.evt('shot', { p, dist: dGoal, z: p.pos.z, blockers });
+    }
     // strike animation — lofted balls scoop, everything else swings through,
     // unless a specialty move (bicycle/finesse/sombrero) already owns the body
     if (!isDribble && p.rig && p.rig.bicycleT <= 0 && p.rig.finesseT <= 0
@@ -321,6 +334,7 @@ export class Match {
     const label = { corner: 'CORNER', goalkick: 'GOAL KICK', freekick: 'FREE KICK', penalty: 'PENALTY!', throwin: 'THROW-IN' }[kind];
     this.hooks.banner(label, kind === 'penalty' ? 2000 : 1100);
     this.hooks.sfx?.('whistle', 1);
+    this.hooks.evt?.('setpiece', { kind, team, att: inRange });
   }
 
   _setPieceUpdate(dt, inputs, events) {
@@ -601,10 +615,12 @@ export class Match {
           this.golden = true;
           this.hooks.banner('GOLDEN GOAL', 2400);
           this.hooks.sfx?.('whistle', 1);
+          this.hooks.evt?.('golden', {});
         }
       } else {
         this.state = 'FULL';
         this.hooks.sfx?.('whistle', 3);
+        this.hooks.evt?.('full', {});
         this.hooks.onFullTime();
         return;
       }
@@ -614,7 +630,13 @@ export class Match {
       this.secondHalfKicker = this.firstHalfKicker === this.teamA ? this.teamB : this.teamA;
       this.hooks.banner('HALF-TIME', 2600);
       this.hooks.sfx?.('whistle', 2);
+      this.hooks.evt?.('half', {});
       return;
+    }
+    // woodwork tap for the booth (flag set by the ball's goal-frame collision)
+    if (this.ball.frameHit) {
+      this.ball.frameHit = false;
+      if (this.ball.isShot) this.hooks.evt?.('woodwork', { p: this.ball.lastTouch });
     }
     if (this.lock.t > 0) this.lock.t -= dt;
     this.transT += dt;
@@ -761,6 +783,7 @@ export class Match {
   _callFoul(fouler, victim) {
     this.hooks.banner('FOUL', 1100);
     this.hooks.sfx?.('whistle', 1);
+    this.hooks.evt?.('foul', { fouler, victim });
     const defGoalX = -fouler.team.dir * FIELD.halfL; // fouler's own goal
     const inBox = Math.abs(victim.pos.x - defGoalX) < FIELD.boxL && Math.abs(victim.pos.z) < FIELD.boxHalfW;
     this.ball.owner = null;
@@ -810,12 +833,14 @@ export class Match {
           ball.kick(best, _v, null);
           best.kickCd = 0.35;
         } else {
+          const passed = ball.intendedReceiver === best && ball.lastTouch?.team === best.team;
           ball.owner = owner = best;
           owner.ownerT = 0;
           owner._dribNoted = false;
           ball.lastTouch = best;
           ball.intendedReceiver = null;
           ball.isShot = false;
+          this.hooks.evt?.('own', { p: best, passed });
           // transition tracking
           if (this.transTeam !== best.team) { this.transTeam = best.team; this.transT = 0; }
         }
@@ -1051,6 +1076,9 @@ export class Match {
         const defTeam = this.teamA.dir === -sideSign ? this.teamA : this.teamB;
         const attTeam = this.otherTeam(defTeam);
         const zSign = Math.sign(ball.pos.z || 1);
+        if (ball.isShot && Math.abs(ball.pos.z) < goalHalf + 2.4 && ball.pos.y < goalHeight + 1.6) {
+          this.hooks.evt?.('nearMiss', { p: ball.lastTouch, dz: Math.abs(ball.pos.z) - goalHalf });
+        }
         if (ball.lastTouch && ball.lastTouch.team === attTeam) {
           this.enterSetPiece('goalkick', defTeam, sideSign * (halfL - FIELD.sixL), zSign * goalHalf * 2);
         } else {

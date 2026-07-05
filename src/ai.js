@@ -108,8 +108,10 @@ export function gkUpdate(match, gk, dt) {
       ball.intendedReceiver = null;
       gk.holdT = 1.1;
       gk.kickCd = 0.5;
+      if (sp > 8) match.hooks?.evt?.('save', { gk, held: true });
     } else {
       // parry wide of the frame, palms angled toward the nearer touchline
+      match.hooks?.evt?.('save', { gk, held: false });
       const out = sp * 0.32;
       const wide = Math.sign(ball.pos.z || rand(-1, 1));
       ball.vel.x = team.dir * out * rand(0.5, 0.9); // away from goal

@@ -17,13 +17,20 @@ export class Input {
     // mouse aiming: NDC tracked here, world point (this.aim) filled by main.js raycast
     this.mouse = { x: 0, y: 0, active: false, lastMove: 0 };
     this.aim = null; // { x, z } on the pitch plane
+    // never swallow keystrokes aimed at text fields (lobby name/room-code inputs)
+    const typing = (e) => {
+      const t = e.target;
+      return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    };
     addEventListener('keydown', (e) => {
+      if (typing(e)) return;
       if (HANDLED.has(e.code)) e.preventDefault();
       if (e.repeat || this.down.has(e.code)) return;
       this.down.add(e.code);
       this._press(e.code);
     });
     addEventListener('keyup', (e) => {
+      if (typing(e)) return;
       this.down.delete(e.code);
       this._release(e.code);
     });
