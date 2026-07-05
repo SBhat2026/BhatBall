@@ -8,6 +8,18 @@
 
 const RECENT_MAX = 12;
 
+// 3b: the one allowed dependency — an in-browser model runtime, dynamically
+// imported inside a worker only after the user engages a commentary mode and
+// a WebGPU probe passes. 0.5B instruct: color is ambient filler; smaller ≈
+// a third of the download and per-line latency of the 1.5B.
+const LLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
+const LLM_MODEL = 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+const LLM_PERSONA = {
+  bbc: 'You are Gary, a measured British football co-commentator. Understated, warm, precise. British English.',
+  hype: 'You are Rafa, an excitable Latin football co-commentator. Energetic Spanglish — mostly English with Spanish exclamations.',
+  dry: 'You are Stan, a deadpan American soccer analyst. Dry wit, short sentences, mildly unimpressed.',
+};
+
 // --- chance quality ------------------------------------------------------------
 // Cheap xG from what the shot logic already knows: distance, angle, blockers.
 export function xgFor(dist, absZ, blockers = 0) {
@@ -460,9 +472,91 @@ export class Booth {
     if (line) this._say(line, 'ana', false);
   }
 
-  // 3b hooks — overridden when the optional model tier is wired in
-  _warmModel() {}
-  _modelColor() { return false; }
+  // ---- optional model color (3b) --------------------------------------------------
+  // Small in-browser model (Web Worker + WebGPU) generates ONLY the rate-limited
+  // build-up color. Never on the event path, never awaited, dropped when stale.
+
+  _warmModel() {
+    if (this._llm || this._llmDead) return;
+    if (typeof navigator === 'undefined' || !navigator.gpu || typeof Worker === 'undefined') {
+      this._llmDead = true;
+      return;
+    }
+    this._llm = { state: 'probing', worker: null, reqId: 0, pending: null };
+    // adapter probe BEFORE any network: no WebGPU → no download, ever
+    navigator.gpu.requestAdapter().then((adapter) => {
+      if (!adapter || !this._llm) return this._killLlm();
+      this._spawnLlm();
+    }).catch(() => this._killLlm());
+  }
+
+  _spawnLlm() {
+    try {
+      const w = new Worker('./src/llm-worker.js', { type: 'module' });
+      this._llm.worker = w;
+      this._llm.state = 'loading';
+      let progressAt = performance.now();
+      w.onmessage = (e) => {
+        const m = e.data;
+        if (!this._llm) return;
+        if (m.t === 'progress') progressAt = performance.now();
+        else if (m.t === 'ready') this._llm.state = 'ready';
+        else if (m.t === 'fail') this._killLlm();
+        else if (m.t === 'line') this._onModelLine(m);
+      };
+      w.onerror = () => this._killLlm();
+      w.postMessage({ t: 'init', cdn: LLM_CDN, model: LLM_MODEL });
+      // watchdog: stalled download (blocked/throttled CDN) → give up silently
+      const watch = setInterval(() => {
+        if (!this._llm || this._llm.state === 'ready') return clearInterval(watch);
+        if (performance.now() - progressAt > 30000) { clearInterval(watch); this._killLlm(); }
+      }, 5000);
+    } catch {
+      this._killLlm();
+    }
+  }
+
+  _killLlm() {
+    try { this._llm?.worker?.terminate(); } catch {}
+    this._llm = null;
+    this._llmDead = true; // templates carry the booth from here on
+  }
+
+  _modelColor() {
+    const L = this._llm;
+    if (!L || L.state !== 'ready') return false;
+    if (L.pending) {
+      // a generation that never returned shouldn't wedge the booth
+      if (performance.now() - L.pending.at > 12000) L.pending = null;
+      return false;
+    }
+    const [type, extra] = this._colorTopic();
+    const id = ++L.reqId;
+    L.pending = { id, epoch: this.sum.epoch, at: performance.now() };
+    const avoid = this.recent.slice(-4).map((t) => t.slice(0, 40)).join(' | ');
+    L.worker.postMessage({
+      t: 'gen', id,
+      messages: [
+        { role: 'system', content: LLM_PERSONA[this.mode] },
+        { role: 'user', content: `Match state: ${this.sum.text(this.match)}. Talk about: ${type} ${JSON.stringify(extra)}. `
+          + `Reply with ONE sentence of color commentary, under 15 words, no quotes, no hashtags. Avoid resembling: ${avoid}` },
+      ],
+    });
+    return true; // this color slot is spoken async (or dropped if stale)
+  }
+
+  _onModelLine(m) {
+    const req = this._llm?.pending;
+    if (!req || req.id !== m.id) return;
+    this._llm.pending = null;
+    if (!m.text || this.mode === 'off' || !this.match || !this.live) return;
+    // stale guards: possession flipped / key moment landed since the request
+    if (req.epoch !== this.sum.epoch || this.speaking) return;
+    if (performance.now() - this.lastKeyAt < 5000) return;
+    const line = m.text.trim().replace(/^["'“”]+|["'“”]+$/g, '').split('\n')[0];
+    if (line.length < 4 || line.length > 150) return;
+    this._say(line, 'ana', false);
+  }
 
   // ---- delivery -------------------------------------------------------------------
 
