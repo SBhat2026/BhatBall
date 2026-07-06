@@ -78,6 +78,73 @@ export const TEAMS = [
 for (const t of TEAMS) Object.assign(t, t.home);
 
 export const SKIN_TONES = ['#f2cfae', '#e5b58f', '#cf9a6e', '#a97753', '#8a5f42'];
+//                            0 fair     1 light    2 olive    3 brown    4 dark
+
+// --- per-player appearance --------------------------------------------------
+// Real-life-ish look for each listed player: [skin index into SKIN_TONES,
+// hair color]. ONLY skin tone + hair color live here — geometry and hair
+// *style* stay procedural/random. Unlisted players fall back to a neutral look.
+const K = '#1f1d1b', DB = '#3a2c20', BR = '#5f4229', LB = '#8a6540', BL = '#cbb182', GY = '#70737b';
+export const PLAYER_LOOKS = {
+  // Brazil
+  'Alisson': [1, DB], 'Danilo': [3, K], 'Marquinhos': [2, K], 'Gabriel': [4, K], 'Arana': [3, K],
+  'Casemiro': [3, K], 'Guimarães': [3, K], 'Paquetá': [2, DB], 'Raphinha': [3, K], 'João Pedro': [2, DB], 'Vinícius Jr': [3, K],
+  // Argentina
+  'E. Martínez': [1, DB], 'Molina': [1, DB], 'Romero': [1, BR], 'Otamendi': [1, DB], 'Tagliafico': [1, DB],
+  'De Paul': [1, BR], 'Enzo': [1, LB], 'Mac Allister': [1, BR], 'Garnacho': [1, DB], 'J. Álvarez': [0, BR], 'Messi': [1, LB],
+  // France
+  'Maignan': [4, K], 'Koundé': [4, K], 'Saliba': [4, K], 'Upamecano': [4, K], 'T. Hernández': [1, DB],
+  'Tchouaméni': [4, K], 'Camavinga': [4, K], 'Griezmann': [1, BR], 'Barcola': [3, K], 'Mbappé': [4, K], 'Dembélé': [4, K],
+  // Germany
+  'ter Stegen': [1, BR], 'Kimmich': [0, LB], 'Rüdiger': [4, K], 'Tah': [4, K], 'Mittelstädt': [1, BR],
+  'Pavlović': [1, DB], 'Gündoğan': [2, K], 'Musiala': [3, K], 'Wirtz': [0, BR], 'Havertz': [1, BR], 'Sané': [3, BL],
+  // Spain
+  'U. Simón': [1, BR], 'Carvajal': [2, DB], 'Le Normand': [1, BR], 'Laporte': [1, DB], 'Cucurella': [1, BR],
+  'Rodri': [1, DB], 'Pedri': [1, DB], 'D. Olmo': [1, BR], 'N. Williams': [4, K], 'Oyarzabal': [1, DB], 'L. Yamal': [3, K],
+  // England
+  'Pickford': [0, LB], 'Alexander-Arnold': [2, DB], 'Stones': [1, DB], 'Guéhi': [4, K], 'Shaw': [1, BR],
+  'Rice': [1, DB], 'Bellingham': [2, DB], 'Palmer': [2, DB], 'Gordon': [0, LB], 'Kane': [1, BR], 'Saka': [4, K],
+  // Italy
+  'Donnarumma': [1, DB], 'Di Lorenzo': [1, DB], 'Bastoni': [1, DB], 'Calafiori': [1, DB], 'Dimarco': [1, DB],
+  'Barella': [1, BR], 'Tonali': [1, DB], 'Frattesi': [1, DB], 'Zaccagni': [1, LB], 'Retegui': [1, DB], 'Chiesa': [1, DB],
+  // Portugal
+  'D. Costa': [1, DB], 'Cancelo': [2, DB], 'R. Dias': [1, DB], 'Inácio': [1, DB], 'N. Mendes': [3, K],
+  'Vitinha': [1, DB], 'B. Fernandes': [1, DB], 'J. Neves': [1, DB], 'R. Leão': [4, K], 'Ronaldo': [1, DB], 'B. Silva': [1, DB],
+  // Netherlands
+  'Verbruggen': [1, BR], 'Dumfries': [4, K], 'De Ligt': [0, BL], 'Van Dijk': [4, K], 'Aké': [4, K],
+  'Reijnders': [2, DB], 'F. de Jong': [1, BR], 'Simons': [1, BR], 'Gakpo': [4, K], 'Depay': [3, K], 'Malen': [4, K],
+  // Japan
+  'Z. Suzuki': [1, K], 'Sugawara': [1, K], 'Itakura': [1, K], 'Tomiyasu': [1, K], 'Itō': [1, K],
+  'Endō': [1, K], 'Morita': [1, K], 'Kamada': [1, K], 'Mitoma': [1, K], 'Ueda': [1, K], 'Kubo': [1, K],
+  // USA
+  'M. Turner': [1, BR], 'Dest': [3, K], 'C. Richards': [4, K], 'Ream': [0, LB], 'A. Robinson': [4, K],
+  'T. Adams': [3, K], 'McKennie': [4, K], 'Reyna': [1, DB], 'Pulisic': [1, LB], 'Balogun': [4, K], 'Weah': [4, K],
+  // Mexico
+  'Malagón': [2, K], 'J. Sánchez': [2, K], 'C. Montes': [2, DB], 'J. Vásquez': [2, K], 'J. Gallardo': [3, K],
+  'E. Álvarez': [2, K], 'L. Chávez': [2, DB], 'G. Mora': [2, K], 'A. Vega': [2, K], 'S. Giménez': [1, BR], 'H. Lozano': [2, DB],
+  // Croatia
+  'Livaković': [1, DB], 'Stanišić': [1, BR], 'Šutalo': [1, DB], 'Gvardiol': [1, BR], 'Sosa': [1, DB],
+  'Modrić': [1, BL], 'Kovačić': [1, DB], 'Brozović': [1, DB], 'Perišić': [1, BR], 'Budimir': [1, BR], 'Majer': [0, LB],
+  // Morocco
+  'Bounou': [2, K], 'Hakimi': [3, K], 'Aguerd': [2, K], 'Dari': [2, K], 'Mazraoui': [2, K],
+  'Amrabat': [2, K], 'Ounahi': [2, K], 'El Khannouss': [2, K], 'Ziyech': [2, K], 'En-Nesyri': [3, K], 'B. Díaz': [2, DB],
+  // Uruguay
+  'Rochet': [1, DB], 'Nández': [2, DB], 'R. Araújo': [1, DB], 'Coates': [1, BR], 'M. Olivera': [2, DB],
+  'Valverde': [1, BR], 'Ugarte': [2, DB], 'De La Cruz': [2, DB], 'Pellistri': [0, LB], 'Núñez': [2, DB], 'F. Torres': [1, BR],
+  // Belgium
+  'Courtois': [1, BR], 'Castagne': [1, BR], 'Debast': [1, BR], 'Faes': [1, BR], 'Theate': [1, LB],
+  'Onana': [4, K], 'De Bruyne': [0, BL], 'Tielemans': [1, DB], 'Doku': [4, K], 'Lukaku': [4, K], 'Trossard': [1, BR],
+  // Cabo Verde
+  'Vozinha': [4, K], 'Dylan Silva': [3, K], 'Logan Costa': [4, K], 'R. Lopes': [3, K], 'Diney': [4, K],
+  'K. Rocha': [3, K], 'J. Monteiro': [4, K], 'D. Duarte': [4, K], 'G. Rodrigues': [3, K], 'Bebé': [4, K], 'Ryan Mendes': [3, K],
+};
+
+// Resolve a player's look by name → { skin: hex, hair: hex }. Neutral fallback
+// (olive skin, dark-brown hair) for placeholder/unknown names.
+export function playerLook(name) {
+  const l = PLAYER_LOOKS[name];
+  return { skin: SKIN_TONES[l ? l[0] : 2], hair: l ? l[1] : DB };
+}
 
 // --- kit resolution ---------------------------------------------------------
 

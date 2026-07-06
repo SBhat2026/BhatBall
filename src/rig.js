@@ -128,7 +128,7 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
 
   // hair: polygon caps in a few styles
   const style = opts.hairStyle ?? Math.floor(Math.random() * 5);
-  const hairC = mat(HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)]);
+  const hairC = mat(opts.hairColor ?? HAIR_COLORS[Math.floor(Math.random() * HAIR_COLORS.length)]);
   if (style === 1) add(new THREE.IcosahedronGeometry(0.2, 0), hairC, 0, 1.78, -0.03).scale.set(1.1, 0.55, 1.05); // crop
   else if (style === 2) add(new THREE.IcosahedronGeometry(0.24, 0), hairC, 0, 1.8, -0.02); // afro
   else if (style === 3) { // bun

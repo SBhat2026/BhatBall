@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { FIELD, BALL, PLAYER, DIFFICULTY, MATE_DIFF, clamp, damp, rand } from './config.js';
-import { SKIN_TONES } from './teams.js';
+import { playerLook } from './teams.js';
 import { buildLineup, ROLE_ATT } from './tactics.js';
 import { buildRig, animateRig } from './rig.js';
 import { Ball } from './ball.js';
@@ -102,9 +102,9 @@ export class Match {
     team.aggro = diff.tackleAggro * (0.7 + 0.6 * lineup.style.aggression);
     lineup.slots.forEach((slot, i) => {
       const isGK = slot.role === 'GK';
-      const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
       const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-      const rig = buildRig(kit ?? def, skin, isGK, { number: entry[0], captain: i === 6, name: entry[1] });
+      const look = playerLook(entry[1]);
+      const rig = buildRig(kit ?? def, look.skin, isGK, { number: entry[0], captain: i === 6, name: entry[1], hairColor: look.hair });
       this.scene.add(rig.group);
       team.players.push({
         team, idx: i, role: slot.role, isGK, isHuman: false, seatKey: null,

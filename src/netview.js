@@ -1,7 +1,7 @@
 // Replica renderer for LAN joiners/spectators: rigs + ball driven by host snapshots.
 import * as THREE from 'three';
 import { BALL } from './config.js';
-import { SKIN_TONES, resolveKits } from './teams.js';
+import { playerLook, resolveKits } from './teams.js';
 import { buildRig, animateRig } from './rig.js';
 import { buildLineup } from './tactics.js';
 import { buildBallMesh } from './balls.js';
@@ -21,9 +21,9 @@ export class NetView {
       const kit = def === teamADef ? kits.a : kits.b;
       lineup.slots.forEach((slot, i) => {
         const isGK = slot.role === 'GK';
-        const skin = SKIN_TONES[(Math.random() * SKIN_TONES.length) | 0];
         const entry = def.xi?.[slot.xi] ?? [i + 1, `${def.code} ${i + 1}`];
-        const rig = buildRig(kit, skin, isGK, { number: entry[0], captain: i === 6, name: entry[1] });
+        const look = playerLook(entry[1]);
+        const rig = buildRig(kit, look.skin, isGK, { number: entry[0], captain: i === 6, name: entry[1], hairColor: look.hair });
         this.scene.add(rig.group);
         this.players.push({
           rig,
