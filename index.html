@@ -128,6 +128,24 @@
   #micBtn:hover { opacity: 1; }
   #micBtn.on { background: #f0f5fdee; box-shadow: 0 4px 14px #9db8e855; }
   #micMode { font-size: 10.5px; font-weight: 800; letter-spacing: 1px; color: #7c88b5; }
+  #audioBtn {
+    position: fixed; top: 8px; right: 104px; z-index: 41;
+    font-size: 15px; cursor: pointer; user-select: none;
+    background: #ffffffcc; backdrop-filter: blur(6px);
+    padding: 5px 10px; border-radius: 12px;
+    box-shadow: 0 4px 14px #4a4f5c22; opacity: 0.9; transition: opacity .15s;
+  }
+  #audioBtn:hover { opacity: 1; }
+  #audioPanel {
+    position: fixed; top: 44px; right: 34px; z-index: 42;
+    background: #ffffffee; backdrop-filter: blur(8px);
+    border-radius: 12px; padding: 11px 13px;
+    box-shadow: 0 8px 24px #4a4f5c33;
+    display: flex; flex-direction: column; gap: 9px;
+    font-size: 12.5px; font-weight: 600; color: var(--ink);
+  }
+  #audioPanel label { display: flex; align-items: center; gap: 8px; cursor: pointer; white-space: nowrap; }
+  #audioPanel input { accent-color: #9db8e8; width: 15px; height: 15px; cursor: pointer; margin: 0; }
   #ticker {
     position: fixed; bottom: 52px; left: 50%; transform: translateX(-50%);
     max-width: 620px; z-index: 14; font-size: 13.5px; color: #fff;
@@ -159,6 +177,12 @@
 <body>
   <div id="vignette"></div>
   <div id="micBtn" title="Commentary: cycle OFF → BBC → Hype → Dry">🎙<span id="micMode">OFF</span></div>
+  <div id="audioBtn" title="Audio settings">🔊</div>
+  <div id="audioPanel" class="hidden">
+    <label><input type="checkbox" id="tglVoice" checked /> Commentary voice</label>
+    <label><input type="checkbox" id="tglSfx" checked /> Ball &amp; match sounds</label>
+    <label><input type="checkbox" id="tglCrowd" checked /> Crowd noise</label>
+  </div>
   <div id="ticker" class="hidden"></div>
   <div id="devIcon" title="">⚙︎</div>
   <div id="devToasts"></div>

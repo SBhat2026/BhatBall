@@ -322,6 +322,7 @@ export class Booth {
     this.cool = new Map(); // per-type cooldowns
     this._voices = [];
     this.live = false;
+    this.voiceOn = true; // spoken voice on/off; captions render regardless
   }
 
   initUI(btn, modeEl, ticker) {
@@ -330,6 +331,8 @@ export class Booth {
     this.ticker = ticker;
     const saved = localStorage.getItem('pp-comm');
     if (MODES.includes(saved)) this.mode = saved;
+    const savedVoice = localStorage.getItem('pp-voice');
+    this.voiceOn = savedVoice === null ? true : savedVoice === '1';
     this._paintMode();
     btn.onclick = () => this.cycle();
     if (typeof speechSynthesis !== 'undefined') {
@@ -622,6 +625,9 @@ export class Booth {
 
   _voiceFor(reg) {
     const p = PERSONAS[this.mode];
+    if (!this._voices.length && typeof speechSynthesis !== 'undefined') {
+      this._voices = speechSynthesis.getVoices(); // some engines populate late
+    }
     if (!p || !this._voices.length) return null;
     const langs = [...p.langs, 'en'];
     // 3d: analyst prefers a *different* voice in the same language family
@@ -638,37 +644,58 @@ export class Booth {
   _say(line, reg, interrupt) {
     const p = PERSONAS[this.mode];
     const who = reg === 'ana' ? p.duo[1] : p.duo[0];
-    this._show(line, who);
-    if (typeof speechSynthesis === 'undefined' || this.audio.muted) return;
+    this._show(line, who); // captions always render, voice or not
+    if (typeof speechSynthesis === 'undefined' || !this.voiceOn || this.audio.muted) return;
+    if (!interrupt && this.speaking) return;
+    const wasSpeaking = this.speaking;
     if (interrupt) this._stopSpeech();
-    else if (this.speaking) return;
-    try {
-      const u = new SpeechSynthesisUtterance(line);
-      const v = this._voiceFor(reg);
-      if (v) u.voice = v;
-      u.rate = reg === 'ana' ? p.anaRate : p.rate;
-      u.pitch = reg === 'ana' ? p.anaPitch : p.pitch;
-      u.volume = 1;
-      this.speaking = true;
-      this.audio.duckCrowd(0.35);
-      const done = () => {
-        this.speaking = false;
-        this.audio.duckCrowd(this.mode === 'off' ? 1 : 0.8);
-      };
-      u.onend = done;
-      u.onerror = done;
-      // belt & braces: some engines drop onend
-      clearTimeout(this._sayT);
-      this._sayT = setTimeout(done, 1000 + line.length * 60);
-      speechSynthesis.speak(u);
-    } catch {
+    this.speaking = true;
+    this.audio.duckCrowd(0.35);
+    const done = () => {
       this.speaking = false;
-    }
+      this.audio.duckCrowd(this.mode === 'off' ? 1 : 0.8);
+    };
+    const speak = () => {
+      if (this.mode === 'off' || !this.voiceOn || this.audio.muted) { this.speaking = false; return; }
+      try {
+        const u = new SpeechSynthesisUtterance(line);
+        const v = this._voiceFor(reg);
+        if (v) u.voice = v;
+        u.rate = reg === 'ana' ? p.anaRate : p.rate;
+        u.pitch = reg === 'ana' ? p.anaPitch : p.pitch;
+        u.volume = 1;
+        u.onend = done;
+        u.onerror = done;
+        this._utter = u; // retain a reference: Chrome GCs in-flight utterances → silence
+        // belt & braces: some engines drop onend
+        clearTimeout(this._sayT);
+        this._sayT = setTimeout(done, 1000 + line.length * 60);
+        speechSynthesis.speak(u);
+      } catch {
+        this.speaking = false;
+      }
+    };
+    clearTimeout(this._speakT);
+    // Chrome drops a speak() issued in the same tick as cancel() — let the queue clear first
+    if (interrupt && wasSpeaking) this._speakT = setTimeout(speak, 60);
+    else speak();
   }
 
   _stopSpeech() {
-    try { if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel(); } catch {}
+    clearTimeout(this._speakT);
+    clearTimeout(this._sayT);
+    try {
+      if (this._utter) { this._utter.onend = null; this._utter.onerror = null; } // stale handler must not clobber new state
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
+    } catch {}
     this.speaking = false;
+  }
+
+  // audio panel: mute the spoken voice but keep the captions
+  setVoice(on) {
+    this.voiceOn = on;
+    localStorage.setItem('pp-voice', on ? '1' : '0');
+    if (!on) this._stopSpeech();
   }
 
   syncMute() {

@@ -57,6 +57,31 @@ const audio = new AudioEngine();
 const booth = new Booth(audio);
 booth.initUI(document.getElementById('micBtn'), document.getElementById('micMode'), document.getElementById('ticker'));
 
+// audio settings popover: commentary voice (captions stay) · match SFX · crowd
+(function wireAudioPanel() {
+  const btn = document.getElementById('audioBtn');
+  const panel = document.getElementById('audioPanel');
+  const tV = document.getElementById('tglVoice');
+  const tS = document.getElementById('tglSfx');
+  const tC = document.getElementById('tglCrowd');
+  const sfxOn = localStorage.getItem('pp-sfx') !== '0';
+  const crowdOn = localStorage.getItem('pp-crowd') !== '0';
+  audio.sfxEnabled = sfxOn;     // honored when the AudioContext boots on first gesture
+  audio.crowdEnabled = crowdOn;
+  tV.checked = booth.voiceOn;
+  tS.checked = sfxOn;
+  tC.checked = crowdOn;
+  btn.onclick = (e) => { e.stopPropagation(); panel.classList.toggle('hidden'); };
+  document.addEventListener('click', (e) => {
+    if (!panel.classList.contains('hidden') && !panel.contains(e.target) && e.target !== btn) {
+      panel.classList.add('hidden');
+    }
+  });
+  tV.onchange = () => booth.setVoice(tV.checked);
+  tS.onchange = () => { localStorage.setItem('pp-sfx', tS.checked ? '1' : '0'); audio.setSfx(tS.checked); };
+  tC.onchange = () => { localStorage.setItem('pp-crowd', tC.checked ? '1' : '0'); audio.setCrowd(tC.checked); };
+})();
+
 // mouse → pitch-plane aim point (fills input.aim for pass/shot targeting)
 const aimRaycaster = new THREE.Raycaster();
 const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);

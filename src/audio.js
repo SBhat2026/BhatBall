@@ -9,6 +9,8 @@ export class AudioEngine {
     this._tension = 0;      // 0..1 — ball deep in an attacking third
     this._crowdBase = 0.05;
     this._duck = 1;         // commentary ducking multiplier (1 = full crowd)
+    this.sfxEnabled = true;   // kick/touch/whistle/switch — the match SFX
+    this.crowdEnabled = true; // crowd bed, swells, chants, roar
   }
 
   // must be called from a user gesture
@@ -46,7 +48,12 @@ export class AudioEngine {
     // all crowd layers hang off one bus so commentary can duck the lot
     this.crowdBus = this.ctx.createGain();
     this.crowdBus.gain.value = 1;
-    this.crowdBus.connect(this.master);
+    // separate on/off gate after the duck bus, so the crowd toggle and the
+    // commentary duck don't fight over the same gain
+    this.crowdOut = this.ctx.createGain();
+    this.crowdOut.gain.value = this.crowdEnabled ? 1 : 0;
+    this.crowdBus.connect(this.crowdOut);
+    this.crowdOut.connect(this.master);
 
     const layer = (freq, q, gain, pan, lfoHz, lfoDepth) => {
       const src = this.ctx.createBufferSource();
@@ -130,6 +137,14 @@ export class AudioEngine {
     if (this.crowdBus) this.crowdBus.gain.setTargetAtTime(mult, this.ctx.currentTime, 0.25);
   }
 
+  // audio panel toggles
+  setCrowd(on) {
+    this.crowdEnabled = on;
+    if (this.crowdOut) this.crowdOut.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.08);
+  }
+
+  setSfx(on) { this.sfxEnabled = on; }
+
   // crowd rises: amount 0..0.3, seconds to decay back
   swell(amount = 0.1, decay = 2.5) {
     if (!this.crowdGain) return;
@@ -160,7 +175,7 @@ export class AudioEngine {
 
   // ball contact: power 0..1
   kick(power = 0.5) {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.sfxEnabled) return;
     const t = this.ctx.currentTime;
     // thump body
     const osc = this.ctx.createOscillator();
@@ -195,7 +210,7 @@ export class AudioEngine {
   }
 
   whistle(blasts = 1) {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.sfxEnabled) return;
     const t0 = this.ctx.currentTime;
     for (let i = 0; i < blasts; i++) {
       const t = t0 + i * 0.42;
@@ -220,7 +235,7 @@ export class AudioEngine {
   }
 
   switchBlip() {
-    if (!this.ctx) return;
+    if (!this.ctx || !this.sfxEnabled) return;
     const t = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     osc.type = 'sine';
