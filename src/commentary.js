@@ -359,6 +359,14 @@ export class Booth {
         this._voices = speechSynthesis.getVoices();
         this._voicesForMode = null; // recompute persona voices once real list lands
       });
+      // TTS on Safari / locked-down Chrome only unlocks from a user gesture. The
+      // mic button is one path, but the booth can also be persisted ON from a
+      // previous session (no click). Prime on the FIRST interaction anywhere so
+      // event-driven match calls actually produce audio.
+      const unlock = () => this._prime();
+      for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+        window.addEventListener(ev, unlock, { once: true, capture: true });
+      }
     }
   }
 
@@ -712,6 +720,9 @@ export class Booth {
         // belt & braces: some engines drop onend
         clearTimeout(this._sayT);
         this._sayT = setTimeout(done, 1000 + line.length * 60);
+        // engine can be left paused (backgrounded tab, a prior cancel) → speak
+        // then silently does nothing; clear that state before AND after.
+        try { if (speechSynthesis.paused) speechSynthesis.resume(); } catch {}
         speechSynthesis.speak(u);
         // some Chrome/macOS builds start synthesis paused → captions but no audio;
         // a resume right after speak, plus a light watchdog, unsticks it
@@ -720,8 +731,9 @@ export class Booth {
         this._resumeIv = setInterval(() => {
           try { if (speechSynthesis.speaking) speechSynthesis.resume(); } catch {}
         }, 4000);
-      } catch {
+      } catch (e) {
         this.speaking = false;
+        console.warn('[booth] speak failed', e);
       }
     };
     clearTimeout(this._speakT);
@@ -735,17 +747,53 @@ export class Booth {
     else speak();
   }
 
-  // Fire a silent, zero-length utterance from inside a user gesture so the
-  // synth engine is unlocked for the later event-driven (non-gesture) calls.
+  // Fire a silent, empty utterance from inside a user gesture so the synth
+  // engine is unlocked for later event-driven (non-gesture) calls. Empty text
+  // resolves instantly on every engine (a whitespace utterance can wedge the
+  // queue on some), and getVoices() usually populates right after.
   _prime() {
     if (this._primed || typeof speechSynthesis === 'undefined') return;
     this._primed = true;
     try {
-      const u = new SpeechSynthesisUtterance(' ');
+      const u = new SpeechSynthesisUtterance('');
       u.volume = 0;
+      u.onend = u.onerror = () => {};
       speechSynthesis.speak(u);
       speechSynthesis.resume();
+      this._voices = speechSynthesis.getVoices();
+      this._voicesForMode = null;
     } catch {}
+  }
+
+  // Console diagnostic: run `pp.booth.testSpeak()` in devtools. Logs the TTS
+  // state and forces one spoken line independent of match/event flow, so we can
+  // tell "engine is mute" apart from "events aren't firing".
+  testSpeak(text = 'Testing the booth, one two.') {
+    const has = typeof speechSynthesis !== 'undefined';
+    const info = {
+      supported: has,
+      voiceCount: (this._voices || []).length,
+      primed: !!this._primed,
+      mode: this.mode, voiceOn: this.voiceOn, muted: this.audio?.muted,
+      paused: has ? speechSynthesis.paused : null,
+      speaking: has ? speechSynthesis.speaking : null,
+    };
+    console.log('[booth] TTS diag', info);
+    if (!has) return info;
+    try {
+      speechSynthesis.cancel();
+      setTimeout(() => {
+        const u = new SpeechSynthesisUtterance(text);
+        const v = this._voiceFor('pbp');
+        if (v) { u.voice = v; u.lang = v.lang; }
+        u.onstart = () => console.log('[booth] onstart — voice:', v?.name ?? 'default');
+        u.onend = () => console.log('[booth] onend');
+        u.onerror = (e) => console.warn('[booth] onerror:', e.error);
+        speechSynthesis.speak(u);
+        speechSynthesis.resume();
+      }, 80);
+    } catch (e) { console.warn('[booth] testSpeak threw', e); }
+    return info;
   }
 
   _stopSpeech() {
