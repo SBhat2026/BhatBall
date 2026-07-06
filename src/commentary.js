@@ -30,18 +30,36 @@ export function xgFor(dist, absZ, blockers = 0) {
 
 // --- personas -------------------------------------------------------------------
 // duo: [play-by-play, analyst] — the analyst register lands in 3d/model color.
+// voice.pbp / voice.ana = ordered preferred voice-name fragments (matched
+// against speechSynthesis.getVoices() by name, case-insensitive), lang is the
+// fallback family. `same: true` = one voice for the whole booth (HYPE).
 export const PERSONAS = {
   bbc: {
+    // Peter (play-by-play) & Gary (analyst): two distinct British male voices.
     label: 'BBC', duo: ['Peter', 'Gary'], langs: ['en-GB'],
     rate: 1.02, pitch: 1.0, anaRate: 0.96, anaPitch: 0.9,
+    voice: {
+      pbp: ['Daniel', 'Google UK English Male', 'Arthur', 'Oliver'],
+      ana: ['Arthur', 'Oliver', 'Google UK English Male', 'Daniel'],
+    },
   },
   hype: {
-    label: 'HYPE', duo: ['Andrés', 'Rafa'], langs: ['es-ES', 'es-MX', 'es-US', 'es'],
-    rate: 1.12, pitch: 1.06, anaRate: 1.04, anaPitch: 0.95,
+    // one extremely expressive, excited Latino man — same voice both mics.
+    label: 'HYPE', duo: ['Andrés', 'Rafa'], langs: ['es-MX', 'es-US', 'es-ES', 'es-AR', 'es'],
+    rate: 1.12, pitch: 1.06, anaRate: 1.04, anaPitch: 0.95, same: true,
+    voice: {
+      pbp: ['Juan', 'Diego', 'Jorge', 'Carlos', 'Google español de Estados Unidos', 'Google español', 'Paulina', 'Monica', 'Mónica'],
+      ana: ['Juan', 'Diego', 'Jorge', 'Carlos', 'Google español de Estados Unidos', 'Google español', 'Paulina', 'Monica', 'Mónica'],
+    },
   },
   dry: {
+    // Chuck & Stan: two different chill/deadpan American male voices.
     label: 'DRY', duo: ['Chuck', 'Stan'], langs: ['en-US'],
     rate: 0.96, pitch: 0.92, anaRate: 0.92, anaPitch: 0.85,
+    voice: {
+      pbp: ['Alex', 'Aaron', 'Google US English', 'Fred'],
+      ana: ['Fred', 'Reed', 'Junior', 'Aaron', 'Google US English'],
+    },
   },
 };
 
@@ -339,6 +357,7 @@ export class Booth {
       this._voices = speechSynthesis.getVoices();
       speechSynthesis.addEventListener?.('voiceschanged', () => {
         this._voices = speechSynthesis.getVoices();
+        this._voicesForMode = null; // recompute persona voices once real list lands
       });
     }
   }
@@ -348,6 +367,7 @@ export class Booth {
     localStorage.setItem('pp-comm', this.mode);
     this._paintMode();
     this._stopSpeech();
+    this._prime(); // this click is a user gesture — use it to unlock TTS
     if (this.mode === 'off') {
       this.audio.duckCrowd(1);
       this._hideTicker();
@@ -623,22 +643,43 @@ export class Booth {
 
   // ---- delivery -------------------------------------------------------------------
 
-  _voiceFor(reg) {
+  // Resolve the two booth voices for the current persona from the installed
+  // set: named preference first, language family as fallback, and (unless the
+  // persona is single-voice) guaranteed distinct play-by-play vs analyst.
+  _computeVoices() {
     const p = PERSONAS[this.mode];
+    this._pbpV = this._anaV = null;
+    if (!p) return;
     if (!this._voices.length && typeof speechSynthesis !== 'undefined') {
       this._voices = speechSynthesis.getVoices(); // some engines populate late
     }
-    if (!p || !this._voices.length) return null;
-    const langs = [...p.langs, 'en'];
-    // 3d: analyst prefers a *different* voice in the same language family
-    const ranked = [];
-    for (const lang of langs) {
-      for (const v of this._voices) if (v.lang?.startsWith(lang)) ranked.push(v);
-      if (ranked.length) break;
+    if (!this._voices.length) return;
+    // language-family pool (first family that has any installed voice)
+    let pool = this._voices.slice();
+    for (const lang of [...p.langs, 'en']) {
+      const hit = this._voices.filter((v) => v.lang?.startsWith(lang));
+      if (hit.length) { pool = hit; break; }
     }
-    if (!ranked.length) return this._voices[0] ?? null;
-    if (reg === 'ana' && ranked.length > 1) return ranked[1];
-    return ranked[0];
+    const byName = (names, exclude) => {
+      for (const n of names || []) {
+        const v = this._voices.find(
+          (x) => x !== exclude && x.name?.toLowerCase().includes(n.toLowerCase()));
+        if (v) return v;
+      }
+      return null;
+    };
+    const pbp = byName(p.voice?.pbp) || pool[0] || this._voices[0] || null;
+    this._pbpV = pbp;
+    if (p.same) { this._anaV = pbp; return; } // one voice by design (HYPE)
+    this._anaV = byName(p.voice?.ana, pbp) || pool.find((v) => v !== pbp) || pbp;
+  }
+
+  _voiceFor(reg) {
+    if (this._voicesForMode !== this.mode || (!this._pbpV && this._voices.length)) {
+      this._computeVoices();
+      this._voicesForMode = this.mode;
+    }
+    return reg === 'ana' ? this._anaV : this._pbpV;
   }
 
   _say(line, reg, interrupt) {
@@ -661,7 +702,7 @@ export class Booth {
       try {
         const u = new SpeechSynthesisUtterance(line);
         const v = this._voiceFor(reg);
-        if (v) u.voice = v;
+        if (v) { u.voice = v; u.lang = v.lang; }
         u.rate = reg === 'ana' ? p.anaRate : p.rate;
         u.pitch = reg === 'ana' ? p.anaPitch : p.pitch;
         u.volume = 1;
@@ -684,9 +725,27 @@ export class Booth {
       }
     };
     clearTimeout(this._speakT);
-    // Chrome drops a speak() issued in the same tick as cancel() — let the queue clear first
-    if (interrupt && wasSpeaking) this._speakT = setTimeout(speak, 60);
+    // Chrome/Safari silently drop a speak() issued in the same tick as cancel().
+    // _stopSpeech() (called above whenever interrupt is set) issues that cancel,
+    // so ANY interrupted line must let the queue clear first — not just the ones
+    // where we were already mid-utterance. This was swallowing every idle-booth
+    // play-by-play call (goals, big saves) → the booth looked mute.
+    void wasSpeaking;
+    if (interrupt) this._speakT = setTimeout(speak, 80);
     else speak();
+  }
+
+  // Fire a silent, zero-length utterance from inside a user gesture so the
+  // synth engine is unlocked for the later event-driven (non-gesture) calls.
+  _prime() {
+    if (this._primed || typeof speechSynthesis === 'undefined') return;
+    this._primed = true;
+    try {
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+      speechSynthesis.resume();
+    } catch {}
   }
 
   _stopSpeech() {
