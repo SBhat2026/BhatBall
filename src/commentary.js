@@ -653,6 +653,7 @@ export class Booth {
     this.audio.duckCrowd(0.35);
     const done = () => {
       this.speaking = false;
+      clearInterval(this._resumeIv);
       this.audio.duckCrowd(this.mode === 'off' ? 1 : 0.8);
     };
     const speak = () => {
@@ -671,6 +672,13 @@ export class Booth {
         clearTimeout(this._sayT);
         this._sayT = setTimeout(done, 1000 + line.length * 60);
         speechSynthesis.speak(u);
+        // some Chrome/macOS builds start synthesis paused → captions but no audio;
+        // a resume right after speak, plus a light watchdog, unsticks it
+        try { speechSynthesis.resume(); } catch {}
+        clearInterval(this._resumeIv);
+        this._resumeIv = setInterval(() => {
+          try { if (speechSynthesis.speaking) speechSynthesis.resume(); } catch {}
+        }, 4000);
       } catch {
         this.speaking = false;
       }
@@ -684,6 +692,7 @@ export class Booth {
   _stopSpeech() {
     clearTimeout(this._speakT);
     clearTimeout(this._sayT);
+    clearInterval(this._resumeIv);
     try {
       if (this._utter) { this._utter.onend = null; this._utter.onerror = null; } // stale handler must not clobber new state
       if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
