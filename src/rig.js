@@ -186,6 +186,7 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
     flickT: 0,    // sombrero heel flick
     finesseT: 0,  // curled-shot follow-through
     kickT: 0,     // standard strike: plant + leg swings through
+    headT: 0,     // header: leap, arch back, snap forward to nod the ball
     chipT: 0,     // scooped lob: toe under the ball, lean back
     throwT: 0,    // throw-in release: arms whip overhead → forward
     diveT: 0,     // GK dive; diveDir = ±1 lateral side
@@ -257,6 +258,28 @@ export function animateRig(rig, speed, dt) {
     rig.legL.rotation.x = 0.25 * s; rig.legR.rotation.x = -0.2 * s;
     rig.kneeL.rotation.x = -0.5 * s; rig.kneeR.rotation.x = -0.3 * s;
     if (rig.diveT <= 0) { g.rotation.z = 0; rig.armL.rotation.z = 0; rig.armR.rotation.z = 0; }
+    return;
+  }
+
+  // --- header: spring off the turf, arch back, then whip forward to nod it ---
+  if (rig.headT > 0) {
+    rig.headT = Math.max(0, rig.headT - dt);
+    const q = 1 - rig.headT / 0.42;
+    const jump = Math.sin(q * Math.PI);                 // up and back down
+    const nod = Math.sin(Math.min(1, q * 1.35) * Math.PI / 2); // arch → snap through contact
+    g.position.y = 0.5 * jump;
+    g.rotation.x = 0.28 - 0.62 * nod;                   // lean back, then head drives forward
+    g.rotation.z = 0;
+    rig.legL.rotation.x = -0.55 * jump; rig.legR.rotation.x = 0.45 * jump; // legs tuck & trail
+    rig.kneeL.rotation.x = -0.8 * jump; rig.kneeR.rotation.x = -0.6 * jump;
+    rig.armL.rotation.x = -1.1 * jump; rig.armR.rotation.x = -1.1 * jump;  // arms up for lift/balance
+    rig.armL.rotation.z = -0.5 * jump; rig.armR.rotation.z = 0.5 * jump;
+    rig.elbL.rotation.x = 0.3; rig.elbR.rotation.x = 0.3;
+    rig.torso.rotation.x = 0;
+    if (rig.headT <= 0) {
+      g.position.y = 0; g.rotation.x = 0;
+      rig.armL.rotation.z = 0; rig.armR.rotation.z = 0;
+    }
     return;
   }
 

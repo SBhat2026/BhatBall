@@ -6,7 +6,7 @@ const MOVE = {
 };
 const HANDLED = new Set([
   ...Object.keys(MOVE), 'Space', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyQ', 'KeyE',
-  'KeyC', 'KeyH', 'KeyP', 'KeyM', 'Tab', 'Escape', 'ShiftLeft', 'ShiftRight', 'Enter',
+  'KeyB', 'KeyC', 'KeyH', 'KeyP', 'KeyM', 'Tab', 'Escape', 'ShiftLeft', 'ShiftRight', 'Enter',
 ]);
 
 export class Input {
@@ -78,6 +78,7 @@ export class Input {
     else if (c === 'KeyL') this.charging = { type: 'chip', t0: performance.now() };
     else if (c === 'KeyQ') this.events.push({ type: 'sombrero' });
     else if (c === 'KeyE') this.events.push({ type: 'bicycle' });
+    else if (c === 'KeyB') this.events.push({ type: 'head', aim: this._aimNow() });
     else if (c === 'KeyK') this.events.push({ type: 'tackle' });
     else if (c === 'KeyC') this.events.push({ type: 'camera' });
     else if (c === 'KeyH') this.events.push({ type: 'help' });

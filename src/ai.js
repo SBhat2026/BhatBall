@@ -110,13 +110,21 @@ export function gkUpdate(match, gk, dt) {
       gk.kickCd = 0.5;
       if (sp > 8) match.hooks?.evt?.('save', { gk, held: true });
     } else {
-      // parry wide of the frame, palms angled toward the nearer touchline
       match.hooks?.evt?.('save', { gk, held: false });
-      const out = sp * 0.32;
       const wide = Math.sign(ball.pos.z || rand(-1, 1));
-      ball.vel.x = team.dir * out * rand(0.5, 0.9); // away from goal
-      ball.vel.z = wide * out * rand(0.7, 1.2);
-      ball.vel.y = out * rand(0.3, 0.6) + 1.5;
+      // a fierce shot at full stretch gets tipped behind — over the byline, wide
+      // of the post — which is a corner under the regular rule (keeper last touch)
+      if (sp > 13 && (stretch > 0 || Math.random() < 0.45)) {
+        ball.vel.x = -team.dir * (8 + rand(0, 3)); // carry it past the byline
+        ball.vel.z = wide * (5 + rand(0, 3));      // and wide of the frame
+        ball.vel.y = 2.2 + rand(0, 1.5);
+      } else {
+        // otherwise punch it clear, back into play toward the nearer touchline
+        const out = sp * 0.32;
+        ball.vel.x = team.dir * out * rand(0.5, 0.9); // away from goal
+        ball.vel.z = wide * out * rand(0.7, 1.2);
+        ball.vel.y = out * rand(0.3, 0.6) + 1.5;
+      }
       ball.lastTouch = gk;
       ball.intendedReceiver = null;
       gk.kickCd = 0.6;

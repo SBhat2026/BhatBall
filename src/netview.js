@@ -82,6 +82,7 @@ export class NetView {
       if ((fx & 32) && !(p.fx & 32)) p.rig.kickT = 0.32;
       if ((fx & 64) && !(p.fx & 64)) p.rig.chipT = 0.4;
       if ((fx & 256) && !(p.fx & 256)) { p.rig.diveT = 0.62; p.rig.diveDir = (fx & 512) ? 1 : -1; }
+      if ((fx & 1024) && !(p.fx & 1024)) p.rig.headT = 0.42;
       p.rig.holdBall = !!(fx & 128);
       p.fx = fx;
     }

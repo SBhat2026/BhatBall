@@ -71,6 +71,7 @@ export class Match {
     this.lock = { team: null, t: 0 };
     this.setPiece = null;
     this.pendingStrike = null;
+    this._aerialCd = 0;
     this.transTeam = null;
     this.transT = 99;
     this._zoneT = 0;
@@ -179,7 +180,7 @@ export class Match {
         p.aiT = 0; p.kickCd = 0; p.touchCd = 0;
         p.tackleT = 0; p.stunT = 0; p.holdT = 0;
         p.rig.bicycleT = 0; p.rig.slideT = 0; p.rig.flickT = 0; p.rig.finesseT = 0;
-        p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.diveT = 0; p.rig.holdBall = false;
+        p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.diveT = 0; p.rig.headT = 0; p.rig.holdBall = false;
         p.rig.group.rotation.set(0, Math.atan2(team.dir, 0), 0);
       }
     }
@@ -218,7 +219,7 @@ export class Match {
     // strike animation — lofted balls scoop, everything else swings through,
     // unless a specialty move (bicycle/finesse/sombrero) already owns the body
     if (!isDribble && p.rig && p.rig.bicycleT <= 0 && p.rig.finesseT <= 0
-        && p.rig.flickT <= 0 && p.rig.throwT <= 0) {
+        && p.rig.flickT <= 0 && p.rig.throwT <= 0 && p.rig.headT <= 0) {
       if (!isShot && vy > Math.hypot(vx, vz) * 0.32) p.rig.chipT = 0.4;
       else p.rig.kickT = 0.32;
     }
@@ -249,7 +250,15 @@ export class Match {
     // taker: nearest human seat on this team, else closest outfielder (GK for goal kicks)
     let taker = null;
     if (kind === 'goalkick') taker = team.players[0];
-    else {
+    else if (kind === 'corner') {
+      // corners are taken by one of the team's three strikers (front line), picked
+      // at random — if that striker happens to be the user's player, they take it.
+      const fwds = team.players
+        .filter((p) => !p.isGK)
+        .sort((a, b) => (ROLE_ATT[b.role] ?? 0) - (ROLE_ATT[a.role] ?? 0))
+        .slice(0, 3);
+      taker = fwds[Math.floor(Math.random() * fwds.length)] ?? team.players[team.players.length - 1];
+    } else {
       let bd = 1e9;
       for (const [k, p] of Object.entries(this.seats)) {
         if (this.seatSide[k] !== team.key) continue;
@@ -384,7 +393,7 @@ export class Match {
       sp.taker.heading.set(sp.team.dir, 0, 0);
       for (const e of evts) {
         if (e.type === 'pass' || e.type === 'through') this._takePass(sp, input, e);
-        else if (e.type === 'chip') this._takeCross(sp);
+        else if (e.type === 'chip') this._takeCross(sp, e.aim);
         else if (e.type === 'shoot' || e.type === 'finesse') this._takeShot(sp, input, e.power ?? 0.6, e.type === 'finesse', e.aim);
       }
     } else if (!seatKey || sp.t >= 9) {
@@ -437,12 +446,13 @@ export class Match {
     this._resumeFromSetPiece(sp);
   }
 
-  _takeCross(sp) {
+  _takeCross(sp, aim = null) {
     const h = sp.taker;
     const K = FIELD.halfL / 52.5;
     const goalX = sp.team.dir * FIELD.halfL;
-    const tx = goalX - sp.team.dir * rand(6, 10.5) * K;
-    const tz = rand(-6, 6) * K;
+    // human takers can float the delivery onto the cursor; AI swings into the danger zone
+    const tx = aim ? clamp(aim.x, goalX - sp.team.dir * 16 * K, goalX) : goalX - sp.team.dir * rand(6, 10.5) * K;
+    const tz = aim ? clamp(aim.z, -FIELD.boxHalfW, FIELD.boxHalfW) : rand(-6, 6) * K;
     const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
     const T = clamp(d / 15, 0.7, 1.6);
     const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
@@ -689,6 +699,7 @@ export class Match {
     gkUpdate(this, this.teamB.players[0], dt);
     this._move(dt, inputs);
     this._control(dt, inputs, events);
+    this._aerials(dt);
     this._deflections();
     this.ball.step(dt);
     this._rules();
@@ -1004,6 +1015,14 @@ export class Match {
           break;
         }
 
+        case 'head': {
+          // only reachable on an airborne ball — never steps on ground control/passing
+          if (h.kickCd > 0 || ball.pos.y < 0.9 || ball.pos.y > 2.9 || dBall > 2.2) break;
+          const onGoal = this._header(h, e.aim, 'auto');
+          if (onGoal) scout?.note('shot');
+          break;
+        }
+
         case 'sombrero': {
           if (dBall > 1.3 || ball.pos.y > 0.8 || h.kickCd > 0) break;
           this.kickBall(h,
@@ -1051,6 +1070,102 @@ export class Match {
         }
       }
     }
+  }
+
+  // Jump and head an airborne ball. mode: 'goal' (nod on target) · 'clear' (hoof
+  // it high and away) · 'flick' (redirect onward) · 'auto' (pick from position).
+  // Returns true if the header was a goal attempt. Shared by the human key and AI.
+  _header(p, aim = null, mode = 'auto') {
+    const dir = p.team.dir;
+    const goalX = dir * FIELD.halfL;
+    const dGoal = Math.hypot(goalX - p.pos.x, p.pos.z);
+    const inAttBox = (goalX - p.pos.x) * dir < FIELD.boxL + 6 && Math.abs(p.pos.z) < FIELD.boxHalfW;
+    const inOwnThird = p.pos.x * dir < -FIELD.halfL * 0.4;
+
+    if (mode === 'auto') {
+      if (inAttBox && dGoal < FIELD.boxL + 8) mode = 'goal';
+      else if (inOwnThird) mode = 'clear';
+      else mode = 'flick';
+    }
+
+    let tx, tz, vy, spd, onGoal = false;
+    if (mode === 'goal') {
+      onGoal = true;
+      const zCap = FIELD.goalHalf - 0.5;
+      tz = this._aimZAtGoal(p, aim, zCap) ?? -Math.sign(p.pos.z || 1) * zCap * rand(0.35, 0.85);
+      tx = goalX;
+      spd = 12 + rand(0, 3);
+      vy = -2.2;                 // powered downward — a header you bury
+    } else if (mode === 'clear') {
+      const d = _v.set(dir, 0, rand(-0.7, 0.7)).normalize();
+      tx = p.pos.x + d.x * 30; tz = p.pos.z + d.z * 30;
+      spd = 15 + rand(0, 4);
+      vy = 5.5;                  // high and away from danger
+    } else {                     // flick / knock-down
+      if (aim) { tx = aim.x; tz = aim.z; }
+      else { tx = p.pos.x + dir * 12; tz = p.pos.z + rand(-4, 4); }
+      spd = 11;
+      vy = 2.0;
+    }
+    const dx = tx - p.pos.x, dz = tz - p.pos.z;
+    const dl = Math.hypot(dx, dz) || 1;
+    p.rig.headT = 0.42;
+    this.kickBall(p, (dx / dl) * spd, vy, (dz / dl) * spd, null, false, onGoal);
+    p.kickCd = 0.5;
+    p.touchCd = 0.2;
+    return onGoal;
+  }
+
+  // AI heading: when a genuinely aerial ball (above ground-control height) is in
+  // reach, let a nearby player nod it — attackers attack it in the box, defenders
+  // clear, everyone contests a challenged ball. Ground play is untouched: this
+  // only ever fires on balls too high to trap at the feet.
+  _aerials(dt) {
+    if (this._aerialCd > 0) { this._aerialCd -= dt; return; }
+    const ball = this.ball;
+    if (ball.owner || ball.heldBy) return;
+    if (ball.pos.y < 1.0 || ball.pos.y > 2.7) return;
+    if (ball.speed() > 20) return; // rockets are for the keeper / deflections
+
+    let best = null, bestD = 1e9;
+    for (const team of [this.teamA, this.teamB]) {
+      for (const p of team.players) {
+        if (p.isGK || p.isHuman || p.kickCd > 0 || p.stunT > 0 || p.tackleT > 0) continue;
+        const d = distXZ(p.pos, ball.pos);
+        if (d < 1.7 && d < bestD) { best = p; bestD = d; }
+      }
+    }
+    if (!best) return;
+
+    const dir = best.team.dir;
+    const goalX = dir * FIELD.halfL;
+    const inAttBox = (goalX - best.pos.x) * dir < FIELD.boxL + 6 && Math.abs(best.pos.z) < FIELD.boxHalfW;
+    const inOwnThird = best.pos.x * dir < -FIELD.halfL * 0.4;
+    let press = 1e9;
+    for (const o of this.opponentsOf(best.team)) press = Math.min(press, distXZ(o.pos, ball.pos));
+    const contested = press < 2.6;
+
+    // only head when it's the better option — an uncontested midfield ball is
+    // left to drop and be controlled at feet (regular play stays intact)
+    let go, mode, mate = null;
+    if (inAttBox) { go = true; mode = 'goal'; }
+    else if (inOwnThird && (contested || ball.vel.x * -dir > 1)) { go = true; mode = 'clear'; }
+    else if (contested) { go = Math.random() < 0.7; mode = 'flick'; }
+    else return;
+
+    if (mode === 'flick') {
+      // knock it on toward the most advanced teammate in range
+      let fb = -1e9;
+      for (const m of best.team.players) {
+        if (m === best || m.isGK) continue;
+        if (distXZ(m.pos, best.pos) > 30) continue;
+        const prog = (m.pos.x - best.pos.x) * dir;
+        if (prog > fb) { fb = prog; mate = m; }
+      }
+    }
+    const onGoal = this._header(best, mate ? { x: mate.pos.x, z: mate.pos.z } : null, mode);
+    if (mate && !onGoal) ball.intendedReceiver = mate;
+    this._aerialCd = 0.4;
   }
 
   _rules() {

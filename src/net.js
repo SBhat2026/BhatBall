@@ -69,7 +69,8 @@ export function rigFx(rig) {
     | (rig.flickT > 0 ? 4 : 0) | (rig.finesseT > 0 ? 8 : 0)
     | (rig.throwT > 0 ? 16 : 0) | (rig.kickT > 0 ? 32 : 0)
     | (rig.chipT > 0 ? 64 : 0) | (rig.holdBall ? 128 : 0)
-    | (rig.diveT > 0 ? 256 : 0) | (rig.diveDir > 0 ? 512 : 0);
+    | (rig.diveT > 0 ? 256 : 0) | (rig.diveDir > 0 ? 512 : 0)
+    | (rig.headT > 0 ? 1024 : 0);
 }
 
 export function encodeSnapshot(match) {

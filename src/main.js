@@ -427,7 +427,7 @@ function endReplay(g) {
     p.pos.set(s.x, 0, s.z); // pos aliases rig.group.position
     rig.group.rotation.set(0, s.ry, 0);
     rig.bicycleT = rig.slideT = rig.flickT = rig.finesseT = 0;
-    rig.kickT = rig.chipT = rig.throwT = rig.diveT = 0;
+    rig.kickT = rig.chipT = rig.throwT = rig.diveT = rig.headT = 0;
     rig.holdBall = false;
   }
   g.match.ball.mesh.position.copy(g.match.ball.pos);
@@ -474,6 +474,7 @@ function stepReplay(g, dt) {
     if ((fx & 32) && !(r.fxPrev[k] & 32)) rig.kickT = 0.32;
     if ((fx & 64) && !(r.fxPrev[k] & 64)) rig.chipT = 0.4;
     if ((fx & 256) && !(r.fxPrev[k] & 256)) { rig.diveT = 0.62; rig.diveDir = (fx & 512) ? 1 : -1; }
+    if ((fx & 1024) && !(r.fxPrev[k] & 1024)) rig.headT = 0.42;
     rig.holdBall = !!(fx & 128);
     r.fxPrev[k] = fx;
     animateRig(rig, a[3] + (b[3] - a[3]) * q, dt * st.rate);
