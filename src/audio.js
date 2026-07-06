@@ -137,6 +137,56 @@ export class AudioEngine {
     if (this.crowdBus) this.crowdBus.gain.setTargetAtTime(mult, this.ctx.currentTime, 0.25);
   }
 
+  // --- neural commentary voice --------------------------------------------------
+  // The booth's Kokoro worker hands back raw PCM; play it here through a dedicated
+  // bus that sits parallel to (not inside) the crowd bus, so the commentator is
+  // full-volume while duckCrowd() pulls the crowd down under him. Returns the
+  // source node (has .stop()) so the booth can barge-in/interrupt, or null if the
+  // audio graph isn't up yet (caption still renders upstream).
+  _ensureVoiceBus() {
+    if (this.voiceOut || !this.ctx) return;
+    this.voiceOut = this.ctx.createGain();
+    this.voiceOut.gain.value = 1;
+    this.voiceOut.connect(this.master);
+  }
+
+  playVoicePCM(pcm, sampleRate, onended) {
+    if (!this.ctx || !pcm || !pcm.length) return null;
+    this._ensureVoiceBus();
+    const buf = this.ctx.createBuffer(1, pcm.length, sampleRate || 24000);
+    if (buf.copyToChannel) buf.copyToChannel(pcm, 0);
+    else buf.getChannelData(0).set(pcm);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(this.voiceOut);
+    src.onended = () => { try { onended && onended(); } catch {} };
+    try { src.start(); } catch { return null; }
+    return src;
+  }
+
+  // Piper hands back an encoded WAV; decodeAudioData is async, so return a
+  // control handle immediately (with a .stop() the booth can barge-in on) and
+  // wire the real source once decoded. Same interface as a BufferSource node.
+  playVoiceWav(arrayBuffer, onended) {
+    if (!this.ctx || !arrayBuffer) return null;
+    this._ensureVoiceBus();
+    const handle = {
+      _src: null, _stopped: false, onended: null,
+      stop() { this._stopped = true; if (this._src) { try { this._src.onended = null; this._src.stop(); } catch {} } },
+    };
+    const fail = () => { try { onended && onended(); } catch {} };
+    this.ctx.decodeAudioData(arrayBuffer.slice(0)).then((buf) => {
+      if (handle._stopped) return;
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(this.voiceOut);
+      src.onended = () => { try { onended && onended(); } catch {} };
+      handle._src = src;
+      try { src.start(); } catch { fail(); }
+    }).catch(fail);
+    return handle;
+  }
+
   // audio panel toggles
   setCrowd(on) {
     this.crowdEnabled = on;

@@ -14,6 +14,21 @@ const RECENT_MAX = 12;
 // a third of the download and per-line latency of the 1.5B.
 const LLM_CDN = 'https://esm.run/@mlc-ai/web-llm';
 const LLM_MODEL = 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC';
+
+// Neural TTS (3c): the booth's actual voices. Kokoro-82M runs in a worker off a
+// CDN + the HuggingFace ONNX mirror, and REPLACES browser speechSynthesis once
+// ready — until then (and if it ever fails) the browser voices carry the booth,
+// captions under that. Same deliberate-engagement + graceful-degrade contract as
+// the color model. WebGPU when present (fast, small q4f16), else WASM (q8).
+const TTS_CDN = 'https://esm.run/kokoro-js';
+const TTS_MODEL = 'onnx-community/Kokoro-82M-v1.0-ONNX';
+
+// Piper (vits-web) is the second in-browser engine — the only one that gives
+// HYPE real male Spanish voices offline. Voice .onnx weights are fetched from
+// the HuggingFace piper-voices mirror on first use and cached (OPFS), so it too
+// works offline after warm-up and on a static github.io deploy. English booths
+// stay on Kokoro; only personas with a `piper:` map use this.
+const PIPER_CDN = 'https://esm.run/@diffusionstudio/vits-web';
 const LLM_PERSONA = {
   bbc: 'You are Gary, a measured British football co-commentator. Understated, warm, precise. British English.',
   hype: 'You are Rafa, an excitable Latin football co-commentator. Energetic Spanglish — mostly English with Spanish exclamations.',
@@ -42,6 +57,8 @@ export const PERSONAS = {
       pbp: ['Daniel', 'Google UK English Male', 'Arthur', 'Oliver'],
       ana: ['Arthur', 'Oliver', 'Google UK English Male', 'Daniel'],
     },
+    // classic British booth: deep authoritative lead + measured analyst
+    kokoro: { pbp: 'bm_george', ana: 'bm_lewis' },
   },
   hype: {
     // one extremely expressive, excited Latino man — same voice both mics.
@@ -51,6 +68,11 @@ export const PERSONAS = {
       pbp: ['Juan', 'Diego', 'Jorge', 'Carlos', 'Google español de Estados Unidos', 'Google español', 'Paulina', 'Monica', 'Mónica'],
       ana: ['Juan', 'Diego', 'Jorge', 'Carlos', 'Google español de Estados Unidos', 'Google español', 'Paulina', 'Monica', 'Mónica'],
     },
+    // Kokoro ships no Spanish in-browser, so HYPE runs on Piper (vits-web):
+    // two distinct MALE Spanish voices — Spain (davefx) + Mexico (ald) — a real
+    // two-man Latino booth. Browser `same:true` above is only the last-ditch
+    // fallback (which still has no male Spanish voice installed).
+    piper: { pbp: 'es_ES-davefx-medium', ana: 'es_MX-ald-medium' },
   },
   dry: {
     // Chuck & Stan: two different chill/deadpan American male voices.
@@ -60,6 +82,8 @@ export const PERSONAS = {
       pbp: ['Alex', 'Aaron', 'Google US English', 'Fred'],
       ana: ['Fred', 'Reed', 'Junior', 'Aaron', 'Google US English'],
     },
+    // deadpan American booth: steady lead + dry, low analyst
+    kokoro: { pbp: 'am_michael', ana: 'am_onyx' },
   },
 };
 
@@ -694,7 +718,14 @@ export class Booth {
     const p = PERSONAS[this.mode];
     const who = reg === 'ana' ? p.duo[1] : p.duo[0];
     this._show(line, who); // captions always render, voice or not
-    if (typeof speechSynthesis === 'undefined' || !this.voiceOn || this.audio.muted) return;
+    if (!this.voiceOn || this.audio.muted) return;
+    // A neural engine (Kokoro for English booths, Piper for HYPE's Spanish) is
+    // the real voice once warmed; browser speech carries the booth until then
+    // (and if it ever dies). Engaging a persona kicks off the right load.
+    this._warmNeural();
+    const nv = this._neuralVoice(reg);
+    if (nv) { this._sayNeural(line, reg, interrupt, nv); return; }
+    if (typeof speechSynthesis === 'undefined') return;
     if (!interrupt && this.speaking) return;
     const wasSpeaking = this.speaking;
     if (interrupt) this._stopSpeech();
@@ -777,6 +808,9 @@ export class Booth {
       mode: this.mode, voiceOn: this.voiceOn, muted: this.audio?.muted,
       paused: has ? speechSynthesis.paused : null,
       speaking: has ? speechSynthesis.speaking : null,
+      kokoro: this._tts ? this._tts.state : (this._ttsDead ? 'dead' : 'unloaded'),
+      piper: this._piper ? this._piper.state : (this._piperDead ? 'dead' : 'unloaded'),
+      engine: (this._neuralVoice('pbp') || {}).engine || 'browser',
     };
     console.log('[booth] TTS diag', info);
     if (!has) return info;
@@ -800,11 +834,167 @@ export class Booth {
     clearTimeout(this._speakT);
     clearTimeout(this._sayT);
     clearInterval(this._resumeIv);
+    this._stopVoice(); // Kokoro path: kill any in-flight PCM + pending synth
     try {
       if (this._utter) { this._utter.onend = null; this._utter.onerror = null; } // stale handler must not clobber new state
       if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel();
     } catch {}
     this.speaking = false;
+  }
+
+  // ---- neural voice (Kokoro = English booths, Piper = HYPE Spanish) ---------------
+  // Workers synthesize short lines off-thread; playback goes through the audio
+  // engine's voice bus so crowd ducking is unchanged. Same interrupt semantics as
+  // the browser path: play-by-play barges in, asides/color wait. A persona names
+  // its engine by which map it carries (`kokoro:` or `piper:`); we warm only that
+  // one, and a line falls back to browser speech until its engine is ready.
+
+  _engState(engine) { return engine === 'piper' ? this._piper : this._tts; }
+
+  // resolve {engine, voice} for this persona+register if its engine is ready and
+  // the voice is in the loaded pack; else null → browser fallback for this line
+  _neuralVoice(reg) {
+    const P = PERSONAS[this.mode];
+    if (!P) return null;
+    const r = reg === 'ana' ? 'ana' : 'pbp';
+    if (P.kokoro && this._tts?.state === 'ready' && this._tts.voices?.has(P.kokoro[r])) {
+      return { engine: 'kokoro', voice: P.kokoro[r] };
+    }
+    if (P.piper && this._piper?.state === 'ready' && this._piper.voices?.has(P.piper[r])) {
+      return { engine: 'piper', voice: P.piper[r] };
+    }
+    return null;
+  }
+
+  _warmNeural() {
+    const P = PERSONAS[this.mode];
+    if (!P) return;
+    if (P.kokoro) this._warmTts();
+    if (P.piper) this._warmPiper();
+  }
+
+  _sayNeural(line, reg, interrupt, nv) {
+    if (!interrupt && this.speaking) return;
+    if (interrupt) this._stopVoice(); // barge-in: drop current audio + pending synth
+    const P = PERSONAS[this.mode];
+    const rate = reg === 'ana' ? (P.anaRate ?? 1) : (P.rate ?? 1);
+    const eng = this._engState(nv.engine);
+    const id = ++eng.reqId;
+    this.speaking = true;
+    this.audio.duckCrowd(0.35);
+    eng.pending = { id, reg };
+    // watchdog: if synthesis never returns, release the mic so the booth flows
+    clearTimeout(this._voiceWd);
+    this._voiceWd = setTimeout(() => this._voiceDone(), 4500 + line.length * 90);
+    const msg = { t: 'gen', id, text: line, voice: nv.voice };
+    if (nv.engine === 'kokoro') msg.speed = Math.max(0.7, Math.min(1.3, rate)); // Piper voice is fixed-rate
+    eng.worker.postMessage(msg);
+  }
+
+  _onNeuralAudio(m, engine) {
+    const eng = this._engState(engine);
+    const req = eng?.pending;
+    if (!req || req.id !== m.id) return; // superseded by a newer/interrupting line
+    eng.pending = null;
+    const data = m.pcm || m.wav;
+    if (!data || this.mode === 'off' || !this.voiceOn || this.audio.muted) { this._voiceDone(); return; }
+    clearTimeout(this._voiceWd);
+    this._voiceNode = m.pcm
+      ? this.audio.playVoicePCM(m.pcm, m.sampleRate, () => this._voiceDone())
+      : this.audio.playVoiceWav(m.wav, () => this._voiceDone());
+    if (!this._voiceNode) { this._voiceDone(); return; } // no audio graph → caption only
+    // backstop in case onended is dropped (WAV length unknown until decoded)
+    const secs = m.pcm ? m.pcm.length / (m.sampleRate || 24000) : 12;
+    this._voiceWd = setTimeout(() => this._voiceDone(), secs * 1000 + 600);
+  }
+
+  _voiceDone() {
+    clearTimeout(this._voiceWd);
+    this._voiceNode = null;
+    this.speaking = false;
+    this.audio.duckCrowd(this.mode === 'off' ? 1 : 0.8);
+  }
+
+  _stopVoice() {
+    clearTimeout(this._voiceWd);
+    if (this._tts) this._tts.pending = null;   // invalidate any in-flight synthesis
+    if (this._piper) this._piper.pending = null;
+    if (this._voiceNode) { try { this._voiceNode.onended = null; this._voiceNode.stop(); } catch {} this._voiceNode = null; }
+  }
+
+  _warmTts() {
+    if (this.mode === 'off' || this._tts || this._ttsDead) return;
+    if (typeof Worker === 'undefined') { this._ttsDead = true; return; }
+    const gpu = typeof navigator !== 'undefined' && !!navigator.gpu;
+    this._tts = { state: 'loading', worker: null, reqId: 0, pending: null, voices: null };
+    try {
+      const w = new Worker('./src/tts-worker.js', { type: 'module' });
+      this._tts.worker = w;
+      let progressAt = performance.now();
+      w.onmessage = (e) => {
+        const m = e.data;
+        if (!this._tts) return;
+        if (m.t === 'progress') progressAt = performance.now();
+        else if (m.t === 'ready') {
+          this._tts.state = 'ready';
+          this._tts.voices = new Set(m.voices || []);
+          console.log('[booth] kokoro ready —', this._tts.voices.size, 'voices,', gpu ? 'webgpu' : 'wasm');
+        } else if (m.t === 'fail') { console.warn('[booth] kokoro fail →browser speech:', m.err); this._killTts(); }
+        else if (m.t === 'audio') this._onNeuralAudio(m, 'kokoro');
+      };
+      w.onerror = () => this._killTts();
+      w.postMessage({
+        t: 'init', cdn: TTS_CDN, model: TTS_MODEL,
+        device: gpu ? 'webgpu' : 'wasm', dtype: gpu ? 'q4f16' : 'q8', warmVoice: 'bm_george',
+      });
+      // stalled/blocked download → give up silently, browser speech stays
+      const watch = setInterval(() => {
+        if (!this._tts || this._tts.state === 'ready') return clearInterval(watch);
+        if (performance.now() - progressAt > 40000) { clearInterval(watch); this._killTts(); }
+      }, 5000);
+    } catch { this._killTts(); }
+  }
+
+  _killTts() {
+    try { this._tts?.worker?.terminate(); } catch {}
+    this._tts = null;
+    this._ttsDead = true; // browser speech carries the English booths from here
+  }
+
+  _warmPiper() {
+    if (this.mode === 'off' || this._piper || this._piperDead) return;
+    if (typeof Worker === 'undefined') { this._piperDead = true; return; }
+    const list = PERSONAS[this.mode]?.piper;
+    const voiceList = list ? [...new Set([list.pbp, list.ana])] : [];
+    this._piper = { state: 'loading', worker: null, reqId: 0, pending: null, voices: null };
+    try {
+      const w = new Worker('./src/piper-worker.js', { type: 'module' });
+      this._piper.worker = w;
+      let progressAt = performance.now();
+      w.onmessage = (e) => {
+        const m = e.data;
+        if (!this._piper) return;
+        if (m.t === 'progress') progressAt = performance.now();
+        else if (m.t === 'ready') {
+          this._piper.state = 'ready';
+          this._piper.voices = new Set(m.voices || []);
+          console.log('[booth] piper ready —', [...this._piper.voices].join(', '));
+        } else if (m.t === 'fail') { console.warn('[booth] piper fail →browser speech:', m.err); this._killPiper(); }
+        else if (m.t === 'audio') this._onNeuralAudio(m, 'piper');
+      };
+      w.onerror = () => this._killPiper();
+      w.postMessage({ t: 'init', cdn: PIPER_CDN, voiceList, warmVoice: voiceList[0] });
+      const watch = setInterval(() => {
+        if (!this._piper || this._piper.state === 'ready') return clearInterval(watch);
+        if (performance.now() - progressAt > 45000) { clearInterval(watch); this._killPiper(); }
+      }, 5000);
+    } catch { this._killPiper(); }
+  }
+
+  _killPiper() {
+    try { this._piper?.worker?.terminate(); } catch {}
+    this._piper = null;
+    this._piperDead = true; // browser speech carries HYPE from here
   }
 
   // audio panel: mute the spoken voice but keep the captions
