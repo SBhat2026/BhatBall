@@ -1,0 +1,84 @@
+# coturn TURN relay for BhatBall Online Rooms, on Fly.io.
+# Needs a DEDICATED IPv4 (fly ips allocate-v4) — shared IPs only serve 80/443.
+# Deploy: see tools/turn/fly/README.md
+app = "bhatball-turn"
+primary_region = "sjc"
+
+[build]
+
+# STUN/TURN signalling port (both transports).
+[[services]]
+  internal_port = 3478
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 3478
+
+[[services]]
+  internal_port = 3478
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 3478
+
+# Relay range 50000-50009/udp — coturn allocates one port per ICE agent, so this
+# supports a handful of concurrent players. Must match MIN_PORT/MAX_PORT in the
+# entrypoint. Fly.toml has no port-range syntax, hence the explicit blocks.
+[[services]]
+  internal_port = 50000
+  protocol = "udp"
+  [[services.ports]]
+    port = 50000
+[[services]]
+  internal_port = 50001
+  protocol = "udp"
+  [[services.ports]]
+    port = 50001
+[[services]]
+  internal_port = 50002
+  protocol = "udp"
+  [[services.ports]]
+    port = 50002
+[[services]]
+  internal_port = 50003
+  protocol = "udp"
+  [[services.ports]]
+    port = 50003
+[[services]]
+  internal_port = 50004
+  protocol = "udp"
+  [[services.ports]]
+    port = 50004
+[[services]]
+  internal_port = 50005
+  protocol = "udp"
+  [[services.ports]]
+    port = 50005
+[[services]]
+  internal_port = 50006
+  protocol = "udp"
+  [[services.ports]]
+    port = 50006
+[[services]]
+  internal_port = 50007
+  protocol = "udp"
+  [[services.ports]]
+    port = 50007
+[[services]]
+  internal_port = 50008
+  protocol = "udp"
+  [[services.ports]]
+    port = 50008
+[[services]]
+  internal_port = 50009
+  protocol = "udp"
+  [[services.ports]]
+    port = 50009
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

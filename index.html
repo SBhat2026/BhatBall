@@ -342,18 +342,18 @@
 
   <script src="./vendor/peerjs.min.js"></script>
   <!--
-    Optional: WebRTC ICE servers for Online Rooms. STUN (built in) is enough for
-    most home networks. To let people on restrictive networks (school/work Wi-Fi,
-    cellular, symmetric NAT) reliably join, add a TURN relay here with your own
-    credentials (free tier at metered.ca, or self-hosted coturn), then uncomment:
-
-    <script>
-      window.BHATBALL_ICE = [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turn:YOUR_TURN_HOST:3478', username: 'USER', credential: 'PASS' },
-      ];
-    </script>
+    WebRTC ICE servers for Online Rooms. STUN handles same-wifi + most home
+    networks; the TURN relay (self-hosted coturn on Fly.io — see tools/turn/fly/)
+    covers the hard cases (symmetric NAT, coffee-shop/school/corporate wifi,
+    cellular) so rooms work on any network. Redeploy the relay to rotate creds.
   -->
+  <script>
+    window.BHATBALL_ICE = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'turn:77.83.142.36:3478?transport=udp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
+      { urls: 'turn:77.83.142.36:3478?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
+    ];
+  </script>
   <script type="importmap">
     { "imports": {
       "three": "./vendor/three.module.js",
