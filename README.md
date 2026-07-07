@@ -50,6 +50,13 @@ Then open **http://localhost:8000** in your browser. (`python3` is preinstalled 
 
 Click **🌐 Online Room** — no server needed. Rooms connect peer-to-peer over WebRTC: the host gets a 4-letter code, friends type it in from anywhere (works on the static site above, including school Macs).
 
+> **Joining from a different network?** WebRTC needs ICE servers to cross NATs.
+> STUN (built in) covers most home networks. If someone can look up the room by
+> code but the join hangs, their network needs a **TURN relay** — set your own
+> credentials via `window.BHATBALL_ICE` in `index.html` (see the commented block
+> there; free tier at [metered.ca](https://www.metered.ca/tools/openrelay/), or
+> self-host coturn). Same-Wi-Fi joining works without TURN.
+
 - **⚔️ 1v1** — host vs first joiner, full 11v11.
 - **🏆 Knockout Cup** — every human seeded into a golden-goal bracket, CPU nations fill the rest.
 - **🛹 3v3 / ⚡ 5v5 street** — small pitch, one player per person, bot goalkeepers, AI fills empty spots. Extra joiners spectate.
