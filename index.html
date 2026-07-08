@@ -376,6 +376,11 @@
     // Sign up at metered.ca, then uncomment with your subdomain + API key:
     // window.BHATBALL_ICE_URL =
     //   'https://YOUR_SUBDOMAIN.metered.live/api/v1/turn/credentials?apiKey=YOUR_KEY';
+
+    // OPTIONAL — AI-styled custom faces. Deploy the Cloudflare Worker in
+    // tools/ai-proxy/ (keeps your Gemini key server-side), then point here.
+    // Without it, uploaded photos are just cropped (no AI). See that README.
+    // window.BHATBALL_AI = { url: 'https://bhatball-ai-proxy.YOUR_SUBDOMAIN.workers.dev' };
   </script>
   <script type="importmap">
     { "imports": {

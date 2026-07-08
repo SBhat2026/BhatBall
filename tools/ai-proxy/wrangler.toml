@@ -1,0 +1,11 @@
+name = "bhatball-ai-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Lock the proxy to your own site(s) so nobody else can spend your Gemini quota.
+# Comma-separated origins (no trailing slash/path). Use "*" only for quick tests.
+[vars]
+ALLOWED_ORIGIN = "https://sbhat2026.github.io,http://localhost:8009"
+
+# GEMINI_API_KEY is a SECRET — never put it here. Set it once with:
+#   wrangler secret put GEMINI_API_KEY
