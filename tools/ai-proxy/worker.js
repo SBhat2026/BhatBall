@@ -58,6 +58,11 @@ export default {
       const { success } = await env.AVATAR_LIMIT.limit({ key: ip });
       if (!success) return json({ error: 'rate limited — try again in a minute' }, 429, headers);
     }
+    // Global spend cap (constant key) — stops a many-IP flood draining the quota.
+    if (env.GLOBAL_LIMIT) {
+      const { success } = await env.GLOBAL_LIMIT.limit({ key: 'global' });
+      if (!success) return json({ error: 'busy — the face styler is at capacity, try again shortly' }, 429, headers);
+    }
 
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, headers); }
