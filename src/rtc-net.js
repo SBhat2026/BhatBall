@@ -54,10 +54,30 @@ const DEFAULT_ICE = [
   { urls: 'stun:stun1.l.google.com:19302' },
   { urls: 'stun:stun2.l.google.com:19302' },
 ];
-const iceServers = () =>
-  (typeof window !== 'undefined' && Array.isArray(window.BHATBALL_ICE) && window.BHATBALL_ICE.length)
-    ? window.BHATBALL_ICE
-    : DEFAULT_ICE;
+// Optionally fetch fresh, multi-region TURN credentials at runtime. Point
+// window.BHATBALL_ICE_URL at an endpoint that returns either an ICE-server array
+// or { iceServers: [...] } — e.g. Metered's free tier:
+//   https://<subdomain>.metered.live/api/v1/turn/credentials?apiKey=<KEY>
+// Metered's relays are geo-distributed, so a distant player connects through a
+// nearby POP instead of hairpinning through one fixed box. Fetched servers are
+// MERGED with any static window.BHATBALL_ICE (keep your own coturn as a floor).
+let _fetchedIce = null;
+async function fetchIce() {
+  if (_fetchedIce) return _fetchedIce;
+  const url = typeof window !== 'undefined' && window.BHATBALL_ICE_URL;
+  if (!url) return null;
+  try {
+    const j = await (await fetch(url)).json();
+    const list = Array.isArray(j) ? j : j?.iceServers;
+    if (Array.isArray(list) && list.length) { _fetchedIce = list; return list; }
+  } catch { /* fall back to static/default below */ }
+  return null;
+}
+const iceServers = () => {
+  const staticIce = (typeof window !== 'undefined' && Array.isArray(window.BHATBALL_ICE) && window.BHATBALL_ICE.length)
+    ? window.BHATBALL_ICE : DEFAULT_ICE;
+  return _fetchedIce ? [...staticIce, ..._fetchedIce] : staticIce;
+};
 const peerOpts = () => ({ config: { iceServers: iceServers() } });
 
 // How long a joiner waits for the data channel to open before giving up.
@@ -82,11 +102,11 @@ export class RtcNet {
     this._joinTimer = null;
   }
 
-  connect() {
+  async connect() {
     if (typeof window === 'undefined' || !window.Peer) {
-      return Promise.reject(new Error('PeerJS not loaded'));
+      throw new Error('PeerJS not loaded');
     }
-    return Promise.resolve();
+    await fetchIce(); // best-effort: pull multi-region TURN creds if configured
   }
 
   on(t, fn) { this.handlers[t] = fn; }
@@ -102,6 +122,7 @@ export class RtcNet {
   // --- host ------------------------------------------------------------------
 
   create(name, team, _attempt = 0) {
+    this._dead = false;
     const code = makeCode();
     const peer = this.peer = new window.Peer(peerId(code), peerOpts());
 
@@ -156,6 +177,7 @@ export class RtcNet {
       this.peers.set(conn.peer, rec);
       conn.send({ t: 'joined', code: this.code, id });
       this._castRoster();
+      this._emit('join', { t: 'join', id }); // lets the host resend a live fixture
     });
     conn.on('data', (m) => this._hostData(conn, m));
     const drop = () => this._hostDrop(conn);
@@ -212,6 +234,7 @@ export class RtcNet {
   // --- joiner ------------------------------------------------------------------
 
   join(code, name) {
+    this._dead = false;
     const clean = (code || '').toUpperCase().trim();
     const nm = (name || 'Player').slice(0, 14);
     const peer = this.peer = new window.Peer(undefined, peerOpts());

@@ -348,11 +348,19 @@
     cellular) so rooms work on any network. Redeploy the relay to rotate creds.
   -->
   <script>
+    // Static ICE floor: STUN + our single self-hosted coturn relay. Kept as a
+    // baseline even when BHATBALL_ICE_URL is set (fetched servers are merged in).
     window.BHATBALL_ICE = [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'turn:77.83.142.36:3478?transport=udp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
       { urls: 'turn:77.83.142.36:3478?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
     ];
+    // OPTIONAL — multi-region TURN for lower latency to distant players. Our one
+    // coturn box hairpins everyone through a single POP; Metered's free tier
+    // (50GB/mo) returns geo-distributed relays so each player uses a nearby one.
+    // Sign up at metered.ca, then uncomment with your subdomain + API key:
+    // window.BHATBALL_ICE_URL =
+    //   'https://YOUR_SUBDOMAIN.metered.live/api/v1/turn/credentials?apiKey=YOUR_KEY';
   </script>
   <script type="importmap">
     { "imports": {

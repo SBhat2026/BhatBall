@@ -809,12 +809,37 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
 
 const NO_SERVER_MSG = 'Could not start a room — check your internet connection and try again.';
 
+let liveFixture = null;        // host: the last fixture cast, resent to late joiners
+let lastJoinCode = '';         // client: remembered for auto-reconnect
+let lastJoinName = 'Player';
+let reconnectTries = 0;
+
+// Client dropped mid-match: try to rejoin the same room a few times before
+// giving up. A successful rejoin gets the live fixture resent by the host and
+// resumes as a spectator (seat isn't reclaimed — that needs a session token).
+function attemptReconnect() {
+  if (netRole !== 'client' || reconnectTries >= 3) {
+    reconnectTries = 0; showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null; return;
+  }
+  reconnectTries++;
+  showBanner(`RECONNECTING… (${reconnectTries}/3)`, 2200);
+  setTimeout(() => {
+    if (netRole !== 'client') return;
+    try { net.close(); } catch { /* already gone */ }
+    net.join(lastJoinCode, lastJoinName);
+  }, 700 * reconnectTries);
+}
+
 async function connectNet() {
   net = new URLSearchParams(location.search).has('ws') ? new Net() : new RtcNet();
   await net.connect();
   net.on('err', (m) => { $('lanError').textContent = m.msg; });
   net.on('roster', (m) => { roster = m.roster; renderRoster(); });
-  net.on('close', () => { if (netRole) { showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null; } });
+  net.on('close', () => {
+    if (!netRole) return;
+    if (netRole === 'client' && game?.kind === 'client') { attemptReconnect(); return; }
+    showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null;
+  });
 }
 
 $('btnHost').onclick = async () => {
@@ -834,6 +859,12 @@ $('btnHost').onclick = async () => {
     ri.apply(m.d);
   });
   net.on('left', () => {});
+  // a joiner arriving after kickoff (or reconnecting) gets the live fixture so
+  // they can render the match as a spectator instead of sitting on a blank room
+  net.on('join', ({ id }) => {
+    if (liveFixture) net.to(id, liveFixture);
+    if (cup) net.to(id, { k: 'bracket', html: bracketHTML(), done: false });
+  });
   net.create($('lanName').value || 'Host', null);
 };
 
@@ -843,6 +874,7 @@ $('btnJoin').onclick = async () => {
   netRole = 'client';
   net.on('joined', (m) => {
     myId = m.id;
+    reconnectTries = 0; // a clean handshake resets the reconnect budget
     $('roomCode').textContent = m.code;
     $('lobbyChoice').classList.add('hidden');
     $('lobbyRoom').classList.remove('hidden');
@@ -850,7 +882,9 @@ $('btnJoin').onclick = async () => {
     $('clientWait').classList.remove('hidden');
   });
   net.on('cast', (m) => handleCast(m.d));
-  net.join($('lanCode').value, $('lanName').value || 'Player');
+  lastJoinCode = $('lanCode').value;
+  lastJoinName = $('lanName').value || 'Player';
+  net.join(lastJoinCode, lastJoinName);
 };
 
 function renderRoster() {
@@ -866,10 +900,14 @@ function renderRoster() {
   }
 }
 
-function castAll(d) { if (netRole === 'host' && net) net.cast(d); }
+function castAll(d) {
+  if (d?.k === 'fixture') liveFixture = d; // remember so late joiners can be caught up
+  if (netRole === 'host' && net) net.cast(d);
+}
 
 function backToRoom() {
   game = null;
+  liveFixture = null; // match over — nothing to catch late joiners up to
   booth.detach();
   clientView = null;
   $('hud').classList.add('hidden');
