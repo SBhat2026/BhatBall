@@ -4,7 +4,8 @@
   "description": "Pastel FIFA-style 11v11 soccer — Three.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dist": "bash tools/build-dist.sh"
   },
   "dependencies": {
     "peerjs": "^1.5.5",
