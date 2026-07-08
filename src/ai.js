@@ -81,7 +81,15 @@ export function gkUpdate(match, gk, dt) {
       gk.target.x = clamp(gk.target.x, Math.min(goalX, goalX + team.dir * rushLim), Math.max(goalX, goalX + team.dir * rushLim));
       gk.urgency = 1;
     } else {
-      gk.target.set(homeX, 0, tz);
+      // Angle play: track the ball's z more tightly and step off the line for
+      // CENTRAL threats (narrows the shooting angle), while staying near the
+      // near post for wide ones — and never so far out that a chip beats us.
+      const dxGoal = Math.abs(ball.pos.x - goalX);
+      const central = 1 - Math.min(1, Math.abs(ball.pos.z) / (FIELD.goalHalf * 2.2));
+      const danger = clamp(1 - dxGoal / (FIELD.boxL * 2.4), 0, 1); // 1 near box … 0 far
+      const zTrack = clamp(ball.pos.z * (0.35 + 0.12 * danger), -zCap, zCap);
+      const stepOff = team.dir * (2.0 * danger * central); // advance only for central danger
+      gk.target.set(homeX + stepOff, 0, zTrack);
       gk.urgency = 0.9;
     }
   }

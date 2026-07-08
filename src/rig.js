@@ -395,30 +395,29 @@ export function animateRig(rig, speed, dt) {
   }
 
   // --- run cycle: hip swing + knee fold on recovery, pumping bent arms, bob & lean ---
-  rig.phase += Math.min(speed, 10) * dt * 1.55;
-  const amp = Math.min(speed / 8, 1) * 0.85;
+  // Smooth the driving speed so abrupt changes (net snapshots, quick stops)
+  // don't pop the joints, then CROSSFADE idle↔run over a speed band instead of a
+  // hard cutoff — removes the visible snap when a player starts/stops moving.
+  // Full-run (run=1) and full-idle (run=0) poses are identical to before.
+  rig.dispSpeed = (rig.dispSpeed ?? speed) + (speed - (rig.dispSpeed ?? speed)) * Math.min(1, dt * 10);
+  const sp = rig.dispSpeed;
+  rig.phase += Math.min(sp, 10) * dt * 1.55;
+  const amp = Math.min(sp / 8, 1) * 0.85;
   const s = Math.sin(rig.phase);
-  rig.legL.rotation.x = s * amp;
-  rig.legR.rotation.x = -s * amp;
+  const run = Math.min(1, Math.max(0, (sp - 0.15) / 1.05)); // 0 = idle … 1 = running
+  const idle = 1 - run;
+  const b = Math.sin(rig.idleT * 1.7);              // breathing sway
+  const mix = (r, i) => r * run + i * idle;
+
+  rig.legL.rotation.x = mix(s * amp, s * amp * 0.2);
+  rig.legR.rotation.x = mix(-s * amp, -s * amp * 0.2);
   // knee folds as the leg swings forward under the body, near-straight at plant
-  rig.kneeL.rotation.x = -amp * 1.05 * Math.max(0, Math.sin(rig.phase - 1.9));
-  rig.kneeR.rotation.x = -amp * 1.05 * Math.max(0, Math.sin(rig.phase + Math.PI - 1.9));
-  rig.armL.rotation.x = -s * amp * 0.7;
-  rig.armR.rotation.x = s * amp * 0.7;
-  rig.elbL.rotation.x = amp * (0.85 + 0.2 * s);
-  rig.elbR.rotation.x = amp * (0.85 - 0.2 * s);
-  rig.torso.rotation.x = 0.16 * Math.min(speed / 8, 1);          // lean into the run
-  g.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * amp;    // stride bob
-  if (speed < 0.3) {
-    // idle: soft breathing sway instead of frozen joints
-    const b = Math.sin(rig.idleT * 1.7);
-    rig.legL.rotation.x *= 0.2; rig.legR.rotation.x *= 0.2;
-    rig.kneeL.rotation.x = -0.06; rig.kneeR.rotation.x = -0.06;
-    rig.armL.rotation.x = -0.05 + 0.03 * b;
-    rig.armR.rotation.x = -0.05 + 0.03 * b;
-    rig.elbL.rotation.x = 0.22 + 0.04 * b;
-    rig.elbR.rotation.x = 0.22 + 0.04 * b;
-    rig.torso.rotation.x = 0.02 + 0.015 * b;
-    g.position.y = 0;
-  }
+  rig.kneeL.rotation.x = mix(-amp * 1.05 * Math.max(0, Math.sin(rig.phase - 1.9)), -0.06);
+  rig.kneeR.rotation.x = mix(-amp * 1.05 * Math.max(0, Math.sin(rig.phase + Math.PI - 1.9)), -0.06);
+  rig.armL.rotation.x = mix(-s * amp * 0.7, -0.05 + 0.03 * b);
+  rig.armR.rotation.x = mix(s * amp * 0.7, -0.05 + 0.03 * b);
+  rig.elbL.rotation.x = mix(amp * (0.85 + 0.2 * s), 0.22 + 0.04 * b);
+  rig.elbR.rotation.x = mix(amp * (0.85 - 0.2 * s), 0.22 + 0.04 * b);
+  rig.torso.rotation.x = mix(0.16 * Math.min(sp / 8, 1), 0.02 + 0.015 * b);
+  g.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * amp * run;   // stride bob fades out
 }
