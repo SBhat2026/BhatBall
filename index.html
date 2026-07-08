@@ -303,7 +303,8 @@
     <div class="card" style="max-width:640px;">
       <h1 style="font-size:26px;">🌐 Online Room</h1>
       <div id="lobbyChoice">
-        <div class="sub">Rooms connect peer-to-peer — host one and share the 4-letter code with friends anywhere.</div>
+        <div class="sub">Rooms connect peer-to-peer — host one and share the 4-letter code with friends anywhere. Works no matter how you opened this page.</div>
+        <div class="sub" style="margin-top:4px;color:#9aa2b1;font-size:12px;">Join hangs on a strict network? Same Wi-Fi → run the LAN server and add <b>?ws</b> to the address. Different networks → a TURN relay on port 443 (see README).</div>
         <h2>Your name</h2>
         <input id="lanName" maxlength="14" placeholder="Player name"
           style="font:inherit;padding:10px 14px;border-radius:12px;border:2px solid #edf0f5;width:220px;" />
@@ -450,11 +451,15 @@
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'turn:77.83.142.36:3478?transport=udp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
       { urls: 'turn:77.83.142.36:3478?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
+      // TURN over 443/TCP — passes strict school/office firewalls (looks like
+      // HTTPS). Uncomment AFTER redeploying coturn with alt-listening-port=443
+      // (see tools/turn/turnserver.conf) + opening 443 in the host firewall.
+      // { urls: 'turn:77.83.142.36:443?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
     ];
-    // OPTIONAL — multi-region TURN for lower latency to distant players. Our one
-    // coturn box hairpins everyone through a single POP; Metered's free tier
-    // (50GB/mo) returns geo-distributed relays so each player uses a nearby one.
-    // Sign up at metered.ca, then uncomment with your subdomain + API key:
+    // STRICT-FIREWALL / MULTI-REGION TURN (recommended for school Wi-Fi). Metered's
+    // free tier (50GB/mo) returns geo-distributed relays INCLUDING TURN over 443,
+    // which is the most reliable way through locked-down networks — and lower
+    // latency to distant players. Sign up at metered.ca, then set your URL:
     // window.BHATBALL_ICE_URL =
     //   'https://YOUR_SUBDOMAIN.metered.live/api/v1/turn/credentials?apiKey=YOUR_KEY';
 

@@ -6,9 +6,15 @@ Built with Three.js. No installs, no accounts, no downloads.
 
 ## ▶️ Play now
 
-**https://sbhat2026.github.io/BhatBall/**
+**https://bhatball.pages.dev** &nbsp;·&nbsp; mirror: **https://sbhat2026.github.io/BhatBall/**
 
-Open that link and press **Kick Off**.
+Open either link and press **Kick Off**. They're identical — the `pages.dev` one
+is a second domain in case a school/office filter blocks `github.io`.
+
+> **On a locked-down computer** (school Mac, no admin, GitHub blocked, can't
+> install git)? See **[DISTRIBUTION.md](DISTRIBUTION.md)** — you can run the whole
+> game from a single file emailed or shared over Google Drive, and multiplayer
+> still works.
 
 ## 🎮 How to play (single player)
 
@@ -46,22 +52,45 @@ python3 -m http.server 8000
 
 Then open **http://localhost:8000** in your browser. (`python3` is preinstalled on macOS — no downloads. Any static file server works; Node.js is *not* required.)
 
+> **No git / GitHub blocked?** A managed Mac often can't install git (it wants
+> Xcode Command Line Tools). Grab the offline bundle instead — see
+> **[DISTRIBUTION.md](DISTRIBUTION.md)**: `npm run dist` produces a ~650 KB zip
+> (share it via Google Drive or email) and a single double-click `bhatball.html`.
+> Both run with the same `python3 -m http.server`.
+
 ## 🌐 Multiplayer
 
-Click **🌐 Online Room** — no server needed. Rooms connect peer-to-peer over WebRTC: the host gets a 4-letter code, friends type it in from anywhere (works on the static site above, including school Macs).
+Click **🌐 Online Room** — no server needed. Rooms connect **peer-to-peer over
+WebRTC**: the host gets a 4-letter code, friends type it in from anywhere.
 
-> **Joining from a different network?** WebRTC needs ICE servers to cross NATs.
-> STUN (built in) covers most home networks. If someone can look up the room by
-> code but the join hangs, their network needs a **TURN relay** — set your own
-> credentials via `window.BHATBALL_ICE` in `index.html` (see the commented block
-> there; free tier at [metered.ca](https://www.metered.ca/tools/openrelay/), or
-> self-host coturn). Same-Wi-Fi joining works without TURN.
+**Key point:** the multiplayer connection runs over the open internet (WebRTC),
+**independent of how you loaded the game**. So even if you're playing from a
+double-clicked offline file (because `github.io` is blocked), Online Rooms still
+work — as long as your network lets WebRTC out. Load the game any way that works
+for you, then just use Online Rooms.
 
 - **⚔️ 1v1** — host vs first joiner, full 11v11.
 - **🏆 Knockout Cup** — every human seeded into a golden-goal bracket, CPU nations fill the rest.
 - **🛹 3v3 / ⚡ 5v5 street** — small pitch, one player per person, bot goalkeepers, AI fills empty spots. Extra joiners spectate.
 
-(If you're offline on a shared LAN, the old relay still works: `npm install && npm start` on one machine, then open its address with `?ws` added to the URL.)
+### If a join hangs (restrictive network) — try in this order
+
+1. **Both on the same Wi‑Fi? Use LAN mode — no internet needed.** On one machine
+   run `npm install && npm start`, note the printed `LAN: http://192.168.x.x:3080`
+   line, and have **everyone** (host included) open that address with **`?ws`**
+   added — e.g. `http://192.168.x.x:3080/?ws`. This never touches the internet,
+   PeerJS, or STUN/TURN. (Needs Node.js on the one host machine.)
+2. **Different networks? Add a TURN relay on port 443.** Strict firewalls block
+   WebRTC's usual UDP but allow HTTPS (443). Free tier at
+   [metered.ca](https://www.metered.ca) gives you TURN over 443 that looks like
+   normal web traffic — set `window.BHATBALL_ICE_URL` in `index.html` (see the
+   commented block there). This is the single most reliable fix for school/office
+   Wi‑Fi.
+3. **Tether one side to a phone hotspot.** Cellular NAT + TURN almost always
+   connects when locked-down Wi‑Fi won't.
+
+STUN (built in) already covers most home networks; you only need the above when a
+network actively blocks WebRTC.
 
 ## License
 
