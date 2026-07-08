@@ -377,10 +377,10 @@
     // window.BHATBALL_ICE_URL =
     //   'https://YOUR_SUBDOMAIN.metered.live/api/v1/turn/credentials?apiKey=YOUR_KEY';
 
-    // OPTIONAL — AI-styled custom faces. Deploy the Cloudflare Worker in
-    // tools/ai-proxy/ (keeps your Gemini key server-side), then point here.
-    // Without it, uploaded photos are just cropped (no AI). See that README.
-    // window.BHATBALL_AI = { url: 'https://bhatball-ai-proxy.YOUR_SUBDOMAIN.workers.dev' };
+    // AI-styled custom faces via the Cloudflare Worker in tools/ai-proxy/
+    // (keeps the Gemini key server-side + per-IP rate limited). Without this,
+    // uploaded photos are just cropped (no AI).
+    window.BHATBALL_AI = { url: 'https://bhatball-ai-proxy.prismlab.workers.dev' };
   </script>
   <script type="importmap">
     { "imports": {

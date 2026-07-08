@@ -35,8 +35,14 @@ falls back to a plain center-crop (no AI, no failure).
   localhost). Widen or add origins there; use `"*"` only for quick tests.
 - **Abuse guard:** requests over ~2MB are rejected (`MAX_IMAGE_BYTES` in
   `worker.js`); the client already downscales to a 256px JPEG first.
-- **Cost:** each face is one `gemini-2.5-flash-image` call. For a public room,
-  consider adding Cloudflare rate limiting or `BotID` in front of the Worker.
+- **Rate limiting is built in:** a per-IP cap (default 6 / 60s, see the
+  `[[unsafe.bindings]]` block in `wrangler.toml`) using Cloudflare's native Rate
+  Limiting binding. Avatar generation is a once-per-player action, so this is
+  generous for real play but stops one client from draining your Gemini quota.
+  Tune `limit`/`period` there (`period` must be 10 or 60) and `wrangler deploy`.
+  Counted per Cloudflare location; for a hard global cap add Cloudflare BotID or
+  a WAF rate-limit rule in front too.
+- **Cost:** each face is one `gemini-2.5-flash-image` call.
 - **Test it:**
   ```sh
   curl https://bhatball-ai-proxy.<sub>.workers.dev            # {"ok":true,...}

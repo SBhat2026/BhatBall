@@ -52,6 +52,13 @@ export default {
     if (request.method !== 'POST') return json({ error: 'method not allowed' }, 405, headers);
     if (!env.GEMINI_API_KEY) return json({ error: 'server not configured' }, 500, headers);
 
+    // Per-IP rate limit (guarded so the Worker still runs if the binding is off).
+    if (env.AVATAR_LIMIT) {
+      const ip = request.headers.get('CF-Connecting-IP') || 'anon';
+      const { success } = await env.AVATAR_LIMIT.limit({ key: ip });
+      if (!success) return json({ error: 'rate limited — try again in a minute' }, 429, headers);
+    }
+
     let body;
     try { body = await request.json(); } catch { return json({ error: 'bad json' }, 400, headers); }
 
