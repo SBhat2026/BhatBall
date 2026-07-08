@@ -20,6 +20,10 @@ import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
 import { animateRig, setFace } from './rig.js';
 import { makeAvatar, faceTexture, aiEnabled } from './avatar.js';
+import {
+  PLAYER_POOL, poolByRole, roleOf, BUDGET, squadCost, squadRating,
+  defaultSquad, randomSquad, buildCustomDef, KIT_NAMES, saveSquad, loadSquad, squadState,
+} from './customteam.js';
 import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
@@ -517,8 +521,8 @@ let game = null;
 //        seats: [{key, side, idx?}], remotes: Map(seatKey→RemoteInput),
 //        lan, restore, onEnd }
 function startHostedMatch(cfg) {
-  const teamADef = TEAMS[cfg.aIdx];
-  const teamBDef = TEAMS[cfg.bIdx];
+  const teamADef = cfg.aDef ?? TEAMS[cfg.aIdx];
+  const teamBDef = cfg.bDef ?? TEAMS[cfg.bIdx];
   const kits = resolveKits(teamADef, teamBDef);
   setField(cfg.sizeKey ?? '11');
   const base = buildScene(cfg.stadiumId);
@@ -847,10 +851,94 @@ if ($('avatarFile')) {
   $('avatarClear').onclick = () => { myAvatar = null; drawAvatarPreview(null); $('avatarNote').textContent = 'Face removed.'; };
 }
 
+// --- custom XI builder -------------------------------------------------------
+let customPick = null; // { players[11], name, kit, away } — live edit state
+
+function refreshCustomSummary() {
+  $('customXISummary').textContent = myCustomDef
+    ? `Using ${myCustomDef.name} · R${myCustomDef.rating}` : '';
+}
+function pushMyCustom() {
+  if (!net) return;
+  if (netRole === 'host') customDefs.set(0, myCustomDef);
+  else if (netRole === 'client' && myCustomDef) net.sendCustom(myCustomDef);
+}
+function updateCustomBudget() {
+  const cost = squadCost(customPick.players);
+  const over = cost > BUDGET;
+  $('customBudgetFill').style.width = `${Math.min(100, (cost / BUDGET) * 100)}%`;
+  $('customBudgetFill').style.background = over ? '#d98a8a' : '#7fb98f';
+  $('customBudgetText').textContent =
+    `Budget ${cost} / ${BUDGET} · team R${squadRating(customPick.players)}${over ? '  ⚠ over budget' : ''}`;
+  $('btnCustomSave').disabled = over;
+  $('customError').textContent = over ? 'Trim your squad to fit the budget.' : '';
+}
+function buildCustomSlots() {
+  const wrap = $('customSlots');
+  wrap.innerHTML = '';
+  for (let i = 0; i < 11; i++) {
+    const role = roleOf(i);
+    const sel = document.createElement('select');
+    sel.style.cssText = 'font:inherit;padding:6px 8px;border-radius:8px;border:2px solid #edf0f5;flex:1;min-width:0;';
+    for (const p of poolByRole(role)) {
+      const o = document.createElement('option');
+      o.value = p.id;
+      o.textContent = `${p.name} · ${p.nation} · R${p.rating}`;
+      sel.appendChild(o);
+    }
+    sel.value = customPick.players[i].id;
+    sel.onchange = () => { customPick.players[i] = PLAYER_POOL.find((p) => p.id === sel.value); updateCustomBudget(); };
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const tag = document.createElement('b');
+    tag.textContent = role; tag.style.cssText = 'width:32px;color:#7c88b5;font-size:12px;flex:none;';
+    row.append(tag, sel);
+    wrap.appendChild(row);
+  }
+}
+function openCustomBuilder() {
+  const saved = loadSquad();
+  customPick = saved || { players: defaultSquad(), name: 'MY XI', kit: 'crimson', away: 'slate' };
+  $('customKit').innerHTML = KIT_NAMES.map((k) => `<option value="${k}">${k}</option>`).join('');
+  $('customKit').value = customPick.kit;
+  $('customName').value = customPick.name;
+  buildCustomSlots();
+  updateCustomBudget();
+  $('customTeamOverlay').classList.remove('hidden');
+}
+if ($('btnCustomXI')) {
+  $('btnCustomXI').onclick = openCustomBuilder;
+  $('btnCustomRandom').onclick = () => { customPick.players = randomSquad(); buildCustomSlots(); updateCustomBudget(); };
+  $('customKit').onchange = () => { customPick.kit = $('customKit').value; };
+  $('btnCustomCancel').onclick = () => $('customTeamOverlay').classList.add('hidden');
+  $('btnCustomClear').onclick = () => {
+    myCustomDef = null; refreshCustomSummary(); pushMyCustom();
+    $('customTeamOverlay').classList.add('hidden');
+  };
+  $('btnCustomSave').onclick = () => {
+    if (squadCost(customPick.players) > BUDGET) return;
+    customPick.name = $('customName').value || 'MY XI';
+    customPick.kit = $('customKit').value;
+    myCustomDef = buildCustomDef(customPick.players, customPick);
+    saveSquad(squadState(customPick.players, customPick.name, customPick.kit, customPick.away));
+    refreshCustomSummary();
+    pushMyCustom();
+    $('customTeamOverlay').classList.add('hidden');
+  };
+  // restore a saved squad so it persists across sessions
+  const savedInit = loadSquad();
+  if (savedInit) { myCustomDef = buildCustomDef(savedInit.players, savedInit); refreshCustomSummary(); }
+}
+
 let liveFixture = null;        // host: the last fixture cast, resent to late joiners
 let lastJoinCode = '';         // client: remembered for auto-reconnect
 let lastJoinName = 'Player';
 let reconnectTries = 0;
+
+// Custom XI. myCustomDef = this device's built synthetic team def (overrides
+// nation for online 1v1); customDefs = host's view of each joiner's def.
+let myCustomDef = null;
+const customDefs = new Map();
 
 // Custom faces. myAvatar = this device's chosen face (dataURL). On the host,
 // avatars maps clientId (0 = host) → dataURL. clientAvatars maps a global player
@@ -923,6 +1011,7 @@ $('btnHost').onclick = async () => {
     ri.apply(m.d);
   });
   net.on('left', () => {});
+  net.on('customteam', ({ from, def }) => { customDefs.set(from, def); });
   net.on('avatar', ({ from, d }) => {
     avatars.set(from, d);
     // if a match is live, decal it onto that player now and tell everyone
@@ -949,6 +1038,7 @@ $('btnHost').onclick = async () => {
     }
   });
   if (myAvatar) avatars.set(0, myAvatar); // host's own face
+  if (myCustomDef) customDefs.set(0, myCustomDef); // host's own XI
   net.create($('lanName').value || 'Host', null);
 };
 
@@ -965,6 +1055,7 @@ $('btnJoin').onclick = async () => {
     $('hostControls').classList.add('hidden');
     $('clientWait').classList.remove('hidden');
     if (myAvatar) net.sendAvatar(myAvatar); // register my face with the host
+    if (myCustomDef) net.sendCustom(myCustomDef); // register my custom XI
   });
   net.on('cast', (m) => handleCast(m.d));
   lastJoinCode = $('lanCode').value;
@@ -1012,10 +1103,15 @@ function randomFreeTeam(used) {
 }
 
 function startLanMatch(e1, e2, golden, onEnd) {
-  // e: {name, team, clientId}  clientId 0 = host, null = CPU
+  // e: {name, team, clientId, def?}  clientId 0 = host, null = CPU; def = custom XI
   const used = usedTeams();
-  if (e1.team == null) e1.team = randomFreeTeam(used);
-  if (e2.team == null) e2.team = randomFreeTeam(used);
+  const defOf = (e) => {
+    if (e.def) return e.def;                       // custom XI overrides nation
+    if (e.team == null) e.team = randomFreeTeam(used);
+    return TEAMS[e.team];
+  };
+  const aDef = defOf(e1);
+  const bDef = defOf(e2);
 
   const seats = [];
   const remotes = new Map();
@@ -1033,13 +1129,14 @@ function startLanMatch(e1, e2, golden, onEnd) {
   }
 
   castAll({
-    k: 'fixture', mode: '11', a: e1.team, b: e2.team, stadium: sel.stadium, sides,
-    ball: sel.ball,
-    label: `${e1.name} (${TEAMS[e1.team].code})  vs  ${e2.name} (${TEAMS[e2.team].code})`,
+    k: 'fixture', mode: '11', a: e1.team ?? null, b: e2.team ?? null,
+    aDef: e1.def ? aDef : undefined, bDef: e2.def ? bDef : undefined,
+    stadium: sel.stadium, sides, ball: sel.ball,
+    label: `${e1.name} (${aDef.code})  vs  ${e2.name} (${bDef.code})`,
   });
 
   startHostedMatch({
-    aIdx: e1.team, bIdx: e2.team,
+    aIdx: e1.team, bIdx: e2.team, aDef, bDef,
     stadiumId: sel.stadium, diffKey: sel.diff, len: sel.len,
     golden, sizeKey: '11', seats, remotes, lan: true,
     onEnd,
@@ -1062,8 +1159,8 @@ $('btnLan1v1').onclick = () => {
   const me = roster.find((r) => r.id === 0);
   cup = null;
   startLanMatch(
-    { name: me.name, team: me.team, clientId: 0 },
-    { name: joiner.name, team: joiner.team, clientId: joiner.id },
+    { name: me.name, team: me.team, clientId: 0, def: customDefs.get(0) || myCustomDef || null },
+    { name: joiner.name, team: joiner.team, clientId: joiner.id, def: customDefs.get(joiner.id) || null },
     false, friendlyEnd,
   );
 };
@@ -1208,7 +1305,7 @@ function castBracket(done = false) {
 function handleCast(d) {
   switch (d.k) {
     case 'fixture': {
-      clientFixture = { aDef: TEAMS[d.a], bDef: TEAMS[d.b], mode: d.mode ?? '11' };
+      clientFixture = { aDef: d.aDef ?? TEAMS[d.a], bDef: d.bDef ?? TEAMS[d.b], mode: d.mode ?? '11' };
       clientFixture.kits = resolveKits(clientFixture.aDef, clientFixture.bDef);
       clientSide = d.sides[myId] ?? null;
       setField(clientFixture.mode);

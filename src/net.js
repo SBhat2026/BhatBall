@@ -33,6 +33,7 @@ export class Net {
   pickTeam(idx) { this.send({ t: 'team', idx }); }
   sendInput(d) { this.send({ t: 'input', d }); }
   sendAvatar(d) { this.send({ t: 'avatar', d }); }
+  sendCustom(def) { this.send({ t: 'customteam', def }); }
   cast(d) { this.send({ t: 'cast', d }); }
   to(id, d) { this.send({ t: 'to', id, d }); }
 }

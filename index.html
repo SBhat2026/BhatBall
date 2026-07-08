@@ -285,6 +285,10 @@
         </div>
         <h2>Your nation</h2>
         <div class="grid" id="lanTeams"></div>
+        <div style="margin:8px 0;">
+          <button class="ghost" id="btnCustomXI">🎨 Build a custom XI</button>
+          <span class="sub" id="customXISummary" style="margin-left:8px;color:#9aa2b1;"></span>
+        </div>
         <div id="hostControls">
           <div class="btnRow">
             <button id="btnLan1v1">⚔️ 1v1 vs first joiner</button>
@@ -297,6 +301,30 @@
         </div>
         <div id="clientWait" class="hidden sub" style="margin-top:12px;">Waiting for the host to start…</div>
       </div>
+    </div>
+  </div>
+
+  <div id="customTeamOverlay" class="overlay hidden">
+    <div class="card" style="max-width:560px;">
+      <h1 style="font-size:24px;">🎨 Build your XI</h1>
+      <div class="sub">Draft any 11 players from every nation, under a rating budget. Used for your online 1v1 team.</div>
+      <div style="display:flex;gap:10px;align-items:center;margin:10px 0;flex-wrap:wrap;">
+        <input id="customName" maxlength="16" placeholder="Team name"
+          style="font:inherit;padding:8px 12px;border-radius:10px;border:2px solid #edf0f5;width:150px;" />
+        <label class="sub">Kit <select id="customKit" style="font:inherit;padding:6px 8px;border-radius:8px;border:2px solid #edf0f5;"></select></label>
+        <button class="ghost" id="btnCustomRandom" style="margin-left:auto;">🎲 Random</button>
+      </div>
+      <div id="customBudgetBar" style="height:10px;border-radius:6px;background:#edf0f5;overflow:hidden;margin-bottom:4px;">
+        <div id="customBudgetFill" style="height:100%;width:0;background:#7fb98f;transition:width .15s,background .15s;"></div>
+      </div>
+      <div class="sub" id="customBudgetText" style="margin-bottom:8px;"></div>
+      <div id="customSlots" style="display:flex;flex-direction:column;gap:5px;max-height:46vh;overflow-y:auto;"></div>
+      <div class="btnRow" style="margin-top:12px;">
+        <button id="btnCustomSave">✅ Save & use</button>
+        <button class="ghost" id="btnCustomClear">Use my nation instead</button>
+        <button class="ghost" id="btnCustomCancel">Cancel</button>
+      </div>
+      <div class="sub" id="customError" style="color:#d98a8a;margin-top:8px;"></div>
     </div>
   </div>
 

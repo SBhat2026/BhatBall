@@ -192,6 +192,7 @@ export class RtcNet {
     if (m.t === 'team') { rec.team = m.idx; this._castRoster(); }
     else if (m.t === 'input') this._emit('input', { t: 'input', from: rec.id, d: m.d });
     else if (m.t === 'avatar') this._emit('avatar', { t: 'avatar', from: rec.id, d: m.d });
+    else if (m.t === 'customteam') this._emit('customteam', { t: 'customteam', from: rec.id, def: m.def });
   }
 
   _hostDrop(conn) {
@@ -298,4 +299,7 @@ export class RtcNet {
 
   // Avatar (a face image dataURL) is rare + must arrive intact → reliable channel.
   sendAvatar(d) { if (this.conn?.open) this.conn.send({ t: 'avatar', d }); }
+
+  // Custom-XI def (joiner → host). Rare + must arrive → reliable channel.
+  sendCustom(def) { if (this.conn?.open) this.conn.send({ t: 'customteam', def }); }
 }

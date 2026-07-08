@@ -92,6 +92,9 @@ wss.on('connection', (ws) => {
       case 'avatar': // joiner → host: custom face image
         if (room && room.host !== ws) send(room.host, { t: 'avatar', from: ws._id, d: m.d });
         break;
+      case 'customteam': // joiner → host: custom XI def
+        if (room && room.host !== ws) send(room.host, { t: 'customteam', from: ws._id, def: m.def });
+        break;
       case 'cast': { // host → everyone else
         if (!room || room.host !== ws) break;
         const s = JSON.stringify({ t: 'cast', d: m.d });
