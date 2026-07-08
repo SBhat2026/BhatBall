@@ -284,8 +284,16 @@ export class RtcNet {
   }
 
   sendInput(d) {
-    if (this.connRt?.open) this.connRt.send({ t: 'input', d });
-    else if (this.conn?.open) this.conn.send({ t: 'input', d });
+    // Split the packet by delivery need:
+    //  • movement (axis/sprint/aim) self-supersedes → unreliable 'rt' (rt falls
+    //    back to the reliable channel if it never opened).
+    //  • discrete events (shoot / pass / set-piece take / switch) are one-shot
+    //    and MUST NOT drop — a dropped shot = "press again to take the free
+    //    kick" — so they ALWAYS go over the reliable 'evt' channel.
+    const mv = { a: d.a, s: d.s, m: d.m };
+    if (this.connRt?.open) this.connRt.send({ t: 'input', d: mv });
+    else if (this.conn?.open) this.conn.send({ t: 'input', d: mv });
+    if (d.e?.length && this.conn?.open) this.conn.send({ t: 'input', d: { e: d.e } });
   }
 
   // Avatar (a face image dataURL) is rare + must arrive intact → reliable channel.

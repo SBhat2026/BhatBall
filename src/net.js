@@ -51,8 +51,12 @@ export class RemoteInput {
   chargePower() { return 0; }
   aimPoint() { return this.aim; }
   apply(d) {
+    // Movement and events can now arrive in SEPARATE packets (rtc-net splits
+    // them across the unreliable/reliable channels), so only touch a field when
+    // that packet actually carries it — else an events-only packet would zero
+    // the player's movement, and a movement packet would look like sprint off.
     if (d.a) this.axis = d.a;
-    this.sprint = !!d.s;
+    if (d.s !== undefined) this.sprint = !!d.s;
     if (d.m !== undefined) this.aim = d.m;
     if (d.e?.length) this.queue.push(...d.e);
   }
