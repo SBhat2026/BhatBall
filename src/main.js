@@ -1247,11 +1247,11 @@ function frame(now) {
     const throwSp = spNow?.kind === 'throwin' && spNow.taker.pos.z > 0 ? spNow : null;
     game.cam.update(dt, game.match.ball, hero, throwSp);
 
-    // cast snapshots at 15Hz
+    // cast snapshots at 20Hz (paired with the client's ~110ms interp buffer)
     if (game.kind === 'host' && net) {
       game.castT -= dt;
       if (game.castT <= 0) {
-        game.castT = 1 / 15;
+        game.castT = 1 / 20;
         castAll(encodeSnapshot(game.match));
       }
     }

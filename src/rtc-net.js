@@ -3,6 +3,21 @@
 // The HOST BROWSER plays the role server.js used to play — it owns the roster,
 // assigns ids, and relays casts — so the static site needs no server at all.
 // window.Peer comes from vendor/peerjs.min.js (classic script in index.html).
+//
+// TWO DATA CHANNELS PER JOINER (this is the latency fix):
+//   • 'evt'  — reliable + ordered. Carries the control plane: joined/roster/
+//              team picks, fixture/start, goals, banners, brackets, end. These
+//              MUST arrive and MUST arrive in order (a dropped 'start' = a
+//              client stuck in the lobby), so retransmit + ordering are correct.
+//   • 'rt'   — UNRELIABLE + unordered. Carries the high-frequency, self-
+//              superseding traffic: host→client state snapshots (15–20Hz) and
+//              client→host inputs (30Hz). Each snapshot fully replaces the last,
+//              so retransmitting a lost one only delays the newer one behind it.
+//              On a reliable channel a single late packet head-of-line-blocks
+//              the whole stream → the rubber-banding you feel over TURN/cellular.
+//              Unreliable delivery drops the stale packet and keeps moving.
+// If the 'rt' channel never opens (rare NAT edge), snapshots/inputs fall back
+// to the reliable 'evt' channel, so worst case is exactly the old behaviour.
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 const makeCode = () => Array.from({ length: 4 }, () => CODE_CHARS[(Math.random() * CODE_CHARS.length) | 0]).join('');
@@ -51,13 +66,16 @@ const JOIN_TIMEOUT_MS = 20000;
 export class RtcNet {
   constructor() {
     this.peer = null;
-    this.conn = null;      // joiner → host connection
+    this.conn = null;      // joiner → host, reliable control channel ('evt')
+    this.connRt = null;    // joiner → host, unreliable realtime channel ('rt')
     this.id = null;
     this.code = null;
     this.handlers = {};    // t → fn(msg)
     // host room state (mirrors server.js)
-    this.clients = new Map(); // id → conn
-    this.names = new Map();
+    this.clients = new Map(); // id → record { id, evt, rt, name, team }
+    this.peers = new Map();   // remote peerId → record (pairs the two channels)
+    this._pendingRt = new Map(); // remote peerId → rt conn that opened before evt
+    this.names = new Map();   // host self (id 0) only
     this.teams = new Map();
     this.nextId = 1;
     this._dead = false;
@@ -112,50 +130,90 @@ export class RtcNet {
 
   _accept(conn) {
     conn.on('open', () => {
+      // The 'rt' (unreliable realtime) channel just pairs onto an existing
+      // client record — it never allocates an id or counts toward the room cap.
+      if (conn.label === 'rt') {
+        const rec = this.peers.get(conn.peer);
+        if (rec) rec.rt = conn;
+        else this._pendingRt.set(conn.peer, conn); // evt hasn't opened yet
+        return;
+      }
+      // 'evt' (or a legacy single) channel = the client's control connection.
       if (this.clients.size >= 15) {
         conn.send({ t: 'err', msg: 'Room full' });
         setTimeout(() => conn.close(), 200);
         return;
       }
       const id = this.nextId++;
-      conn._id = id;
-      this.clients.set(id, conn);
-      this.names.set(id, (conn.metadata?.name || `P${id}`).slice(0, 14));
-      this.teams.set(id, null);
+      const rec = {
+        id, evt: conn,
+        rt: this._pendingRt.get(conn.peer) || null,
+        name: (conn.metadata?.name || `P${id}`).slice(0, 14),
+        team: null,
+      };
+      this._pendingRt.delete(conn.peer);
+      this.clients.set(id, rec);
+      this.peers.set(conn.peer, rec);
       conn.send({ t: 'joined', code: this.code, id });
       this._castRoster();
     });
-    conn.on('data', (m) => {
-      if (!m || conn._id == null) return;
-      if (m.t === 'team') { this.teams.set(conn._id, m.idx); this._castRoster(); }
-      else if (m.t === 'input') this._emit('input', { t: 'input', from: conn._id, d: m.d });
-    });
-    const drop = () => {
-      if (conn._id == null || !this.clients.has(conn._id)) return;
-      this.clients.delete(conn._id);
-      this.names.delete(conn._id);
-      this.teams.delete(conn._id);
-      this._emit('left', { t: 'left', id: conn._id });
-      this._castRoster();
-    };
+    conn.on('data', (m) => this._hostData(conn, m));
+    const drop = () => this._hostDrop(conn);
     conn.on('close', drop);
     conn.on('error', drop);
   }
 
-  _castRoster() {
-    const roster = [...this.names.entries()].map(([id, name]) => ({ id, name, team: this.teams.get(id) ?? null }));
-    const msg = { t: 'roster', roster };
-    this._emit('roster', msg);
-    for (const c of this.clients.values()) if (c.open) c.send(msg);
+  _hostData(conn, m) {
+    if (!m) return;
+    const rec = this.peers.get(conn.peer);
+    if (!rec) return; // rt packet arrived before the client's evt handshake
+    if (m.t === 'team') { rec.team = m.idx; this._castRoster(); }
+    else if (m.t === 'input') this._emit('input', { t: 'input', from: rec.id, d: m.d });
   }
 
-  cast(d) { for (const c of this.clients.values()) if (c.open) c.send({ t: 'cast', d }); }
-  to(id, d) { const c = this.clients.get(id); if (c?.open) c.send({ t: 'cast', d }); }
+  _hostDrop(conn) {
+    // Losing only the 'rt' channel is survivable: snapshots fall back to 'evt'.
+    const pend = this._pendingRt.get(conn.peer);
+    if (pend === conn) { this._pendingRt.delete(conn.peer); return; }
+    const rec = this.peers.get(conn.peer);
+    if (!rec) return;
+    if (rec.rt === conn && rec.evt !== conn) { rec.rt = null; return; }
+    // The control channel dropped → the client is gone.
+    this.clients.delete(rec.id);
+    this.peers.delete(conn.peer);
+    try { rec.rt?.close(); } catch { /* already gone */ }
+    this._emit('left', { t: 'left', id: rec.id });
+    this._castRoster();
+  }
+
+  _castRoster() {
+    const roster = [{ id: 0, name: this.names.get(0), team: this.teams.get(0) ?? null }];
+    for (const rec of this.clients.values()) roster.push({ id: rec.id, name: rec.name, team: rec.team ?? null });
+    roster.sort((a, b) => a.id - b.id);
+    const msg = { t: 'roster', roster };
+    this._emit('roster', msg);
+    for (const rec of this.clients.values()) this._sendEvt(rec, msg);
+  }
+
+  _sendEvt(rec, msg) { if (rec.evt?.open) rec.evt.send(msg); }
+
+  // Snapshots (k:'snap') go over the unreliable 'rt' channel when it's up;
+  // everything else — and the fallback — uses the reliable 'evt' channel.
+  cast(d) {
+    const realtime = d && d.k === 'snap';
+    for (const rec of this.clients.values()) {
+      if (realtime && rec.rt?.open) rec.rt.send({ t: 'cast', d });
+      else if (rec.evt?.open) rec.evt.send({ t: 'cast', d });
+    }
+  }
+
+  to(id, d) { const rec = this.clients.get(id); if (rec?.evt?.open) rec.evt.send({ t: 'cast', d }); }
 
   // --- joiner ------------------------------------------------------------------
 
   join(code, name) {
     const clean = (code || '').toUpperCase().trim();
+    const nm = (name || 'Player').slice(0, 14);
     const peer = this.peer = new window.Peer(undefined, peerOpts());
 
     // If the data channel never opens (blocked by NAT/firewall with no TURN
@@ -171,13 +229,22 @@ export class RtcNet {
     }, JOIN_TIMEOUT_MS);
 
     peer.on('open', () => {
+      // Reliable control channel — the handshake + all lobby/scoring events.
       const conn = this.conn = peer.connect(peerId(clean), {
-        reliable: true, metadata: { name: (name || 'Player').slice(0, 14) },
+        reliable: true, label: 'evt', metadata: { name: nm },
       });
       conn.on('open', () => { opened = true; clearTimeout(this._joinTimer); });
       conn.on('data', (m) => { if (m?.t) this._emit(m.t, m); });
       conn.on('close', () => { if (!this._dead) this._emit('close', {}); });
       conn.on('error', () => { if (!this._dead && !opened) this._emit('err', { t: 'err', msg: 'Connection to the host failed. Please try again.' }); });
+
+      // Unreliable realtime channel — snapshots down, inputs up. Best-effort:
+      // if it fails we simply keep using the reliable channel for these.
+      const rt = this.connRt = peer.connect(peerId(clean), {
+        reliable: false, label: 'rt', metadata: { name: nm },
+      });
+      rt.on('data', (m) => { if (m?.t) this._emit(m.t, m); });
+      rt.on('error', () => { /* fall back to reliable conn */ });
     });
 
     peer.on('error', (e) => {
@@ -192,5 +259,8 @@ export class RtcNet {
     else if (this.conn?.open) this.conn.send({ t: 'team', idx });
   }
 
-  sendInput(d) { if (this.conn?.open) this.conn.send({ t: 'input', d }); }
+  sendInput(d) {
+    if (this.connRt?.open) this.connRt.send({ t: 'input', d });
+    else if (this.conn?.open) this.conn.send({ t: 'input', d });
+  }
 }

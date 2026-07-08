@@ -6,6 +6,20 @@ import { buildRig, animateRig } from './rig.js';
 import { buildLineup } from './tactics.js';
 import { buildBallMesh } from './balls.js';
 
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+// shortest-arc angle interpolation so rotations don't spin the long way around
+const angLerp = (a, b, t) => {
+  let d = (b - a) % (Math.PI * 2);
+  if (d > Math.PI) d -= Math.PI * 2;
+  else if (d < -Math.PI) d += Math.PI * 2;
+  return a + d * t;
+};
+// Render this far behind the newest snapshot. With ~20Hz snapshots (50ms apart)
+// a ~110ms buffer keeps two real snapshots on hand to interpolate between, so
+// one lost/late packet doesn't stall — motion stays smooth at constant latency
+// instead of the rubber-band you get from chasing only the latest target.
+const RENDER_DELAY = 0.11;
+
 export class NetView {
   constructor(scene, teamADef, teamBDef, mode, myKey, ballStyle) {
     this.scene = scene;
@@ -49,6 +63,7 @@ export class NetView {
     scene.add(ring);
 
     this.snap = null;
+    this.buf = []; // interpolation buffer: [{ t, p, b }] timestamped on arrival
     // ball proxy so GameCamera can follow it
     this.ballProxy = { pos: this.ballCur };
     this.playerProxy = { pos: new THREE.Vector3(), heading: new THREE.Vector3(1, 0, 0) };
@@ -67,13 +82,11 @@ export class NetView {
 
   applySnapshot(s) {
     this.snap = s;
+    // Fire one-shot animations off the freshest data (a few ms of timing offset
+    // on a flick/dive is imperceptible; positions are what get interpolated).
     for (let i = 0; i < s.p.length && i < this.players.length; i++) {
-      const [x, z, ry, spd, fx] = s.p[i];
+      const fx = s.p[i][4];
       const p = this.players[i];
-      p.tgt.set(x, 0, z);
-      p.rotY = ry;
-      p.speed = spd;
-      // trigger one-shot animations on rising edge
       if ((fx & 1) && !(p.fx & 1)) p.rig.bicycleT = 1.05;
       if ((fx & 2) && !(p.fx & 2)) p.rig.slideT = 0.55;
       if ((fx & 4) && !(p.fx & 4)) p.rig.flickT = 0.4;
@@ -86,20 +99,43 @@ export class NetView {
       p.rig.holdBall = !!(fx & 128);
       p.fx = fx;
     }
-    this.ballTgt.set(s.b[0], s.b[1], s.b[2]);
+    // Timestamp on arrival and push into the interpolation buffer; trim history.
+    const now = performance.now() / 1000;
+    this.buf.push({ t: now, p: s.p, b: s.b });
+    while (this.buf.length > 2 && this.buf[1].t < now - 1) this.buf.shift();
   }
 
   update(dt) {
-    const k = 1 - Math.exp(-14 * dt);
-    for (const p of this.players) {
-      p.cur.lerp(p.tgt, k);
-      p.rig.group.position.x = p.cur.x;
-      p.rig.group.position.z = p.cur.z;
-      p.rig.group.rotation.y = p.rotY;
-      animateRig(p.rig, p.speed, dt);
+    // Render at (now - RENDER_DELAY), interpolating between the two snapshots
+    // that straddle that render time. If we've starved (no fresh snapshot), the
+    // pair collapses to the newest and we hold rather than drift/extrapolate.
+    const buf = this.buf;
+    if (buf.length) {
+      const rt = performance.now() / 1000 - RENDER_DELAY;
+      let i = buf.length - 1;
+      while (i > 0 && buf[i].t > rt) i--;
+      const A = buf[i];
+      const B = buf[Math.min(i + 1, buf.length - 1)];
+      const alpha = B.t > A.t ? clamp((rt - A.t) / (B.t - A.t), 0, 1) : 0;
+      for (let k = 0; k < this.players.length; k++) {
+        const pa = A.p[k]; const pb = B.p[k];
+        if (!pa) continue;
+        const p = this.players[k];
+        const x = pa[0] + (pb[0] - pa[0]) * alpha;
+        const z = pa[1] + (pb[1] - pa[1]) * alpha;
+        p.cur.set(x, 0, z);
+        p.rig.group.position.x = x;
+        p.rig.group.position.z = z;
+        p.rig.group.rotation.y = angLerp(pa[2], pb[2], alpha);
+        animateRig(p.rig, pa[3] + (pb[3] - pa[3]) * alpha, dt);
+      }
+      this.ballCur.set(
+        A.b[0] + (B.b[0] - A.b[0]) * alpha,
+        A.b[1] + (B.b[1] - A.b[1]) * alpha,
+        A.b[2] + (B.b[2] - A.b[2]) * alpha,
+      );
+      this.ballMesh.position.copy(this.ballCur);
     }
-    this.ballCur.lerp(this.ballTgt, 1 - Math.exp(-18 * dt));
-    this.ballMesh.position.copy(this.ballCur);
 
     const me = this.myIdx() >= 0 ? this.players[this.myIdx()] : null;
     this.marker.visible = !!me;
