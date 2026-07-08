@@ -1179,7 +1179,9 @@ function frame(now) {
       }
     }
     updateReticle(game);
-    game.view.update(dt);
+    // feed local intent so the view can client-side-predict my own avatar
+    const intent = clientSide ? { dir: input.moveDir(), sprint: input.sprinting() } : null;
+    game.view.update(dt, intent);
     game.confetti.update(dt);
     game.sfx.update(dt);
     game.cam.update(dt, game.view.ballProxy, game.view.playerProxy);
@@ -1227,7 +1229,28 @@ function frame(now) {
       }
     }
 
-    game.match.update(simDt, inputs, evmap);
+    if (game.kind === 'host') {
+      // Fixed-timestep: step the sim in constant 1/60 chunks so the match (AI +
+      // ball) runs at real speed no matter the host's render FPS. Previously a
+      // host dipping below 30fps slow-mo'd the game for every joiner. Slow-mo is
+      // applied by scaling how fast the accumulator fills, keeping the physics
+      // sub-step size constant. Discrete events are buffered so a shot/switch
+      // press is never dropped on a frame that happens to take zero steps.
+      const FIXED = 1 / 60;
+      if (!game.evBuf) game.evBuf = {};
+      for (const k in evmap) (game.evBuf[k] ??= []).push(...evmap[k]);
+      game.acc = (game.acc ?? 0) + dt * scale;
+      let steps = 0;
+      while (game.acc >= FIXED && steps < 4) {
+        game.match.update(FIXED, inputs, game.evBuf);
+        for (const k in game.evBuf) game.evBuf[k].length = 0; // events fire once
+        game.acc -= FIXED;
+        steps++;
+      }
+      if (steps === 4) game.acc = 0; // shed backlog rather than spiral
+    } else {
+      game.match.update(simDt, inputs, evmap);
+    }
     updateReticle(game);
     updatePassRing(game);
     // crowd leans in when the ball reaches an attacking third
