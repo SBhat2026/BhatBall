@@ -244,7 +244,34 @@
         <button class="ghost" id="btnWC">🏆 World Cup</button>
         <button class="ghost" id="btnLAN">🌐 Online Room</button>
         <button class="ghost" id="btnProfile">👤 Profile</button>
+        <button class="ghost" id="btnTheater">🎬 Theater</button>
       </div>
+    </div>
+  </div>
+
+  <div id="theaterOverlay" class="overlay hidden">
+    <div class="card" style="max-width:520px;">
+      <h1 style="font-size:24px;">🎬 Replay Theater</h1>
+      <div class="sub">Your saved goals. Watch one, play the whole reel, or share a clip.</div>
+      <div id="theaterList" style="display:flex;flex-direction:column;gap:6px;margin:12px 0;max-height:52vh;overflow-y:auto;"></div>
+      <div class="btnRow">
+        <button id="btnTheaterReel">▶ Play highlights reel</button>
+        <label class="ghost" style="cursor:pointer;padding:8px 12px;border-radius:12px;border:2px solid #edf0f5;font-weight:700;">
+          ⬆ Import clip<input id="theaterImport" type="file" accept="application/json,.json" style="display:none;" />
+        </label>
+        <button class="ghost" id="btnTheaterClear">Clear all</button>
+        <button class="ghost" id="btnTheaterClose">← Back</button>
+      </div>
+      <div class="sub" id="theaterNote" style="margin-top:8px;color:#9aa2b1;"></div>
+    </div>
+  </div>
+
+  <div id="theaterHUD" class="hidden" style="position:fixed;left:0;right:0;bottom:24px;display:flex;justify-content:center;gap:10px;z-index:40;pointer-events:none;">
+    <div style="background:rgba(20,22,30,.72);color:#fff;border-radius:14px;padding:8px 14px;display:flex;align-items:center;gap:12px;pointer-events:auto;font-weight:700;">
+      <span id="theaterTitle">GOAL</span>
+      <button id="btnTheaterPrev" style="font:inherit;background:#333a4a;color:#fff;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;">⏮</button>
+      <button id="btnTheaterNext" style="font:inherit;background:#333a4a;color:#fff;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;">⏭</button>
+      <button id="btnTheaterExit" style="font:inherit;background:#7a3a3a;color:#fff;border:none;border-radius:8px;padding:4px 10px;cursor:pointer;">✕</button>
     </div>
   </div>
 
@@ -403,6 +430,7 @@
       <div class="sub" id="endNote"></div>
       <div class="btnRow" style="justify-content:center;">
         <button id="btnRematch">Rematch</button>
+        <button class="ghost" id="btnHighlights" style="display:none;">🎬 Highlights</button>
         <button class="ghost" id="btnMenu">Menu</button>
       </div>
     </div>

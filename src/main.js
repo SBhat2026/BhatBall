@@ -25,6 +25,7 @@ import {
   defaultSquad, randomSquad, buildCustomDef, KIT_NAMES, saveSquad, loadSquad, squadState,
 } from './customteam.js';
 import { awardMatch, summary as progressSummary, BADGES } from './progress.js';
+import { listReplays, saveReplay, deleteReplay, clearReplays, exportReplay, importReplay, replayLabel } from './theater.js';
 import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
@@ -298,6 +299,7 @@ function refresh() {
 }
 refresh();
 
+$('btnHighlights').onclick = () => { const l = listReplays(); if (l.length) { $('endscreen').classList.add('hidden'); openReplay(l, 0, true); } };
 $('btnRematch').onclick = () => { $('endscreen').classList.add('hidden'); startSP(); };
 $('btnMenu').onclick = () => { $('endscreen').classList.add('hidden'); toMenu(); };
 $('btnStart').onclick = () => { audio.init(); startSP(); };
@@ -564,15 +566,26 @@ function startHostedMatch(cfg) {
         showBanner(`GOAL!  ${scorer.def.code}${who}`, 2600);
         castAll({ k: 'goal', x, z, text: `GOAL!  ${scorer.def.code}${who}` });
         setScore(match.scoreA, match.scoreB, match.clockText());
-        // single-player: queue a multi-angle replay once the net stops rippling
-        if (!cfg.lan) {
-          const aCount = match.teamA.players.length;
-          g.replayMeta = {
-            goalSign: Math.sign(x || 1),
-            scorerGi: toucher ? (toucher.team.key === 'B' ? aCount + toucher.idx : toucher.idx) : -1,
-          };
-          g.replayIn = 1.05;
+        const aCount = match.teamA.players.length;
+        const meta = {
+          goalSign: Math.sign(x || 1),
+          scorerGi: toucher ? (toucher.team.key === 'B' ? aCount + toucher.idx : toucher.idx) : -1,
+        };
+        // save to Replay Theater — SP AND host both have the live tape (this is
+        // what finally gives online matches saved replays)
+        if (g.rec?.frames?.length >= 45) {
+          try {
+            saveReplay({
+              aDef: match.teamA.def, bDef: match.teamB.def,
+              aCode: match.teamA.def.code, bCode: match.teamB.def.code,
+              mode: cfg.sizeKey ?? '11', stadium: cfg.stadiumId ?? 0, ball: sel.ball,
+              score: [match.scoreA, match.scoreB], scorer: scorer.def.code, meta,
+              frames: g.rec.frames.map((f) => ({ ps: f.ps, b: f.b })),
+            });
+          } catch { /* storage full — skip silently */ }
         }
+        // single-player: queue a multi-angle in-match replay once the net stops
+        if (!cfg.lan) { g.replayMeta = meta; g.replayIn = 1.05; }
       },
       onBicycle: () => { g.slow = 0.45; base.cam.punch(); castAll({ k: 'sfx', n: 'kick', a: 1 }); },
       onFullTime: () => cfg.onEnd(match),
@@ -635,6 +648,7 @@ function startSP(restore = null, sizeKey = '11') {
         if (unlock) note += `  ${unlock}`;
       }
       $('endNote').textContent = note;
+      $('btnHighlights').style.display = listReplays().length ? '' : 'none';
       $('endscreen').classList.remove('hidden');
     },
   });
@@ -799,6 +813,7 @@ let cup = null;
 let clientFixture = null;   // client-side: {aDef, bDef, mode}
 let clientSide = null;      // 'A' | 'B' | null
 let clientView = null;
+let clientTape = [];        // client-side rolling snapshot tape for replays
 
 $('btnLAN').onclick = () => {
   $('menu').classList.add('hidden');
@@ -953,6 +968,86 @@ if ($('btnProfile')) {
   $('btnProfile').onclick = () => { renderProfile(); $('menu').classList.add('hidden'); $('profileOverlay').classList.remove('hidden'); };
   $('btnProfileClose').onclick = () => { $('profileOverlay').classList.add('hidden'); $('menu').classList.remove('hidden'); };
 }
+// --- Replay Theater ----------------------------------------------------------
+let theater = null; // standalone replay player state (own scene, drives NetView)
+
+function renderTheaterList() {
+  const list = listReplays();
+  const wrap = $('theaterList');
+  $('btnTheaterReel').disabled = !list.length;
+  if (!list.length) { wrap.innerHTML = '<div class="sub">No saved goals yet — score one and it lands here.</div>'; return; }
+  wrap.innerHTML = '';
+  list.forEach((rec, i) => {
+    const when = new Date(rec.ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:7px 10px;background:#fafbfd;border-radius:10px;';
+    row.innerHTML = `<b>${replayLabel(rec)}</b>${rec.scorer ? ` <span class="sub">· ${rec.scorer}</span>` : ''}${rec.imported ? ' <span class="sub">· imported</span>' : ''}
+      <span class="sub" style="margin-left:auto;">${when}</span>`;
+    const mk = (txt, fn, danger) => { const b = document.createElement('button'); b.className = 'ghost'; b.textContent = txt; b.style.cssText = `padding:4px 9px;font-size:12px;${danger ? 'color:#c96;' : ''}`; b.onclick = fn; return b; };
+    row.append(
+      mk('▶', () => openReplay(list, i, false)),
+      mk('⬇', () => exportReplay(rec)),
+      mk('🗑', () => { deleteReplay(rec.id); renderTheaterList(); }, true),
+    );
+    wrap.appendChild(row);
+  });
+}
+function openReplay(list, idx, reel) {
+  if (!list.length) return;
+  ['menu', 'theaterOverlay', 'endscreen', 'lobby', 'wcOverlay', 'bracketOverlay', 'profileOverlay'].forEach((id) => $(id).classList.add('hidden'));
+  $('theaterHUD').classList.remove('hidden');
+  playReplayAt(list, idx, reel);
+}
+function playReplayAt(list, idx, reel) {
+  idx = ((idx % list.length) + list.length) % list.length;
+  const rec = list[idx];
+  setField(rec.mode || '11');
+  const base = buildScene(rec.stadium ?? 0);
+  const view = new NetView(base.scene, rec.aDef, rec.bDef, rec.mode || '11', null, rec.ball ?? 0);
+  theater = { ...base, view, rec, list, idx, reel, playT: 0, fi: -1 };
+  const f0 = rec.frames[0];
+  base.cam.snap({ pos: new THREE.Vector3(f0.b[0], f0.b[1], f0.b[2]) });
+  $('theaterTitle').textContent = `${replayLabel(rec)} · ${idx + 1}/${list.length}`;
+}
+function stepTheater(dt) {
+  const t = theater;
+  const frames = t.rec.frames;
+  const total = frames.length / 30;
+  t.playT += dt;
+  const i0 = Math.min(frames.length - 1, Math.floor(t.playT * 30));
+  if (i0 !== t.fi) { t.fi = i0; t.view.applySnapshot({ p: frames[i0].ps, b: frames[i0].b }); }
+  t.view.update(dt);
+  t.cam.update(dt, t.view.ballProxy, t.view.playerProxy);
+  t.composer.render();
+  if (t.playT >= total + 0.5) {
+    if (t.reel) {
+      if (t.idx + 1 >= t.list.length) return exitTheater();
+      return playReplayAt(t.list, t.idx + 1, true);
+    }
+    t.playT = 0; t.fi = -1; // loop a single clip
+  }
+}
+function exitTheater() {
+  theater = null;
+  $('theaterHUD').classList.add('hidden');
+  $('hud').classList.add('hidden');
+  $('menu').classList.remove('hidden');
+}
+if ($('btnTheater')) {
+  $('btnTheater').onclick = () => { renderTheaterList(); $('menu').classList.add('hidden'); $('theaterOverlay').classList.remove('hidden'); };
+  $('btnTheaterClose').onclick = () => { $('theaterOverlay').classList.add('hidden'); $('menu').classList.remove('hidden'); };
+  $('btnTheaterReel').onclick = () => { const l = listReplays(); if (l.length) openReplay(l, 0, true); };
+  $('btnTheaterClear').onclick = () => { clearReplays(); renderTheaterList(); };
+  $('theaterImport').onchange = async (e) => {
+    const f = e.target.files?.[0]; if (!f) return;
+    try { await importReplay(f); renderTheaterList(); $('theaterNote').textContent = 'Clip imported.'; }
+    catch { $('theaterNote').textContent = 'That file isn’t a BhatBall replay.'; }
+  };
+  $('btnTheaterExit').onclick = exitTheater;
+  $('btnTheaterPrev').onclick = () => theater && playReplayAt(theater.list, theater.idx - 1, false);
+  $('btnTheaterNext').onclick = () => theater && playReplayAt(theater.list, theater.idx + 1, false);
+}
+
 // Award XP + toast level-ups / new badges. Scores from the player's perspective.
 function awardProgress(myScore, oppScore) {
   const res = awardMatch({ won: myScore > oppScore, draw: myScore === oppScore, goalsFor: myScore });
@@ -1361,6 +1456,7 @@ function handleCast(d) {
       $('hud').classList.remove('hidden');
       showBanner(clientSide ? 'YOU PLAY!' : `SPECTATING · ${d.label}`, 2500);
       for (const [idx, tex] of Object.entries(clientAvatars)) clientView.setFaceByIndex(+idx, tex);
+      clientTape = []; // fresh tape for this match's replays
       break;
     }
     case 'avatar':
@@ -1371,6 +1467,9 @@ function handleCast(d) {
       if (clientView) {
         clientView.applySnapshot(d);
         setScore(d.sc[0], d.sc[1], d.ck);
+        // roll a client-side tape from incoming snapshots for the Replay Theater
+        clientTape.push({ ps: d.p, b: d.b });
+        if (clientTape.length > 240) clientTape.shift();
       }
       break;
     case 'banner': showBanner(d.text, d.ms); break;
@@ -1381,6 +1480,19 @@ function handleCast(d) {
         game.cam.shake();
         audio.roar();
         showBanner(d.text, 2600);
+        // save the goal for the client's Replay Theater (online replays!)
+        if (clientFixture && clientTape.length >= 45) {
+          try {
+            saveReplay({
+              aDef: clientFixture.aDef, bDef: clientFixture.bDef,
+              aCode: clientFixture.aDef.code, bCode: clientFixture.bDef.code,
+              mode: clientFixture.mode, stadium: 0, ball: clientFixture.ball ?? 0,
+              score: null, scorer: null,
+              meta: { goalSign: Math.sign(d.x || 1), scorerGi: -1 },
+              frames: clientTape.map((f) => ({ ps: f.ps, b: f.b })),
+            });
+          } catch { /* storage full */ }
+        }
       }
       break;
     case 'sfx': audio.event(d.n, d.a); break;
@@ -1422,6 +1534,12 @@ function frame(now) {
   last = now;
 
   const events = input.takeEvents();
+  // Replay Theater takes over the canvas when active (no live game running).
+  if (theater) {
+    for (const e of events) if (e.type === 'pause' || e.type === 'skip') { exitTheater(); return; }
+    stepTheater(dt);
+    return;
+  }
   if (!game) return;
   updateAim();
 
