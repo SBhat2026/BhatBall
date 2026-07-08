@@ -191,6 +191,7 @@ export class RtcNet {
     if (!rec) return; // rt packet arrived before the client's evt handshake
     if (m.t === 'team') { rec.team = m.idx; this._castRoster(); }
     else if (m.t === 'input') this._emit('input', { t: 'input', from: rec.id, d: m.d });
+    else if (m.t === 'avatar') this._emit('avatar', { t: 'avatar', from: rec.id, d: m.d });
   }
 
   _hostDrop(conn) {
@@ -286,4 +287,7 @@ export class RtcNet {
     if (this.connRt?.open) this.connRt.send({ t: 'input', d });
     else if (this.conn?.open) this.conn.send({ t: 'input', d });
   }
+
+  // Avatar (a face image dataURL) is rare + must arrive intact → reliable channel.
+  sendAvatar(d) { if (this.conn?.open) this.conn.send({ t: 'avatar', d }); }
 }

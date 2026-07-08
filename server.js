@@ -79,6 +79,7 @@ wss.on('connection', (ws) => {
         ws._room = r.code;
         ws._id = id;
         send(ws, { t: 'joined', code: r.code, id });
+        send(r.host, { t: 'join', id }); // let the host catch up a late joiner
         castRoster(r);
         break;
       }
@@ -87,6 +88,9 @@ wss.on('connection', (ws) => {
         break;
       case 'input': // joiner → host
         if (room && room.host !== ws) send(room.host, { t: 'input', from: ws._id, d: m.d });
+        break;
+      case 'avatar': // joiner → host: custom face image
+        if (room && room.host !== ws) send(room.host, { t: 'avatar', from: ws._id, d: m.d });
         break;
       case 'cast': { // host → everyone else
         if (!room || room.host !== ws) break;

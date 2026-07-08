@@ -195,6 +195,26 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
   };
 }
 
+// Decal a custom face texture onto the FRONT (+z) of the head. Idempotent:
+// re-calling swaps the texture on the existing plane. MeshBasic so the face
+// reads clearly regardless of pitch lighting. Used for multiplayer avatars.
+export function setFace(rig, texture) {
+  if (!rig?.group || !texture) return;
+  if (!rig._face) {
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.3, 0.32),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, depthWrite: false }),
+    );
+    plane.position.set(0, 1.66, 0.205); // head is an r=0.22 icosphere at y=1.66
+    plane.renderOrder = 4;
+    rig.group.add(plane);
+    rig._face = plane;
+  } else {
+    rig._face.material.map = texture;
+    rig._face.material.needsUpdate = true;
+  }
+}
+
 const TAU = Math.PI * 2;
 
 export function animateRig(rig, speed, dt) {

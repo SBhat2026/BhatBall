@@ -18,7 +18,8 @@ import { flagURL, flagHTML } from './flags.js';
 import { Booth } from './commentary.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
-import { animateRig } from './rig.js';
+import { animateRig, setFace } from './rig.js';
+import { makeAvatar, faceTexture, aiEnabled } from './avatar.js';
 import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
@@ -595,6 +596,7 @@ function startHostedMatch(cfg) {
 
   g.match = match;
   game = g;
+  if (cfg.lan) applyAvatars(match); // decal custom faces + tell clients
   booth.attach(match);
   // the constructor inlines the first kickoff, so announce it here
   booth.evt('kickoff', { first: !cfg.restore });
@@ -809,10 +811,72 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
 
 const NO_SERVER_MSG = 'Could not start a room — check your internet connection and try again.';
 
+// --- custom face upload ------------------------------------------------------
+function drawAvatarPreview(dataURL) {
+  const cv = $('avatarPreview');
+  const ctx = cv.getContext('2d');
+  if (!dataURL) { ctx.clearRect(0, 0, cv.width, cv.height); $('avatarClear').style.display = 'none'; return; }
+  const img = new Image();
+  img.onload = () => { ctx.clearRect(0, 0, cv.width, cv.height); ctx.drawImage(img, 0, 0, cv.width, cv.height); };
+  img.src = dataURL;
+  $('avatarClear').style.display = '';
+}
+function pushMyAvatar() {
+  if (!myAvatar || !net) return;
+  if (netRole === 'host') { avatars.set(0, myAvatar); if (game?.kind === 'host' && game.match) applyAvatars(game.match); }
+  else if (netRole === 'client') net.sendAvatar(myAvatar);
+}
+if ($('avatarFile')) {
+  $('avatarNote').textContent = aiEnabled()
+    ? 'Your face is AI-styled into the game look and shown on your player.'
+    : 'Your face is cropped and shown on your player. (Add a Gemini key to AI-style it.)';
+  $('avatarFile').onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    $('avatarNote').textContent = aiEnabled() ? 'Styling your face…' : 'Preparing…';
+    const raw = await new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(file); });
+    try {
+      myAvatar = await makeAvatar(raw);
+      drawAvatarPreview(myAvatar);
+      $('avatarNote').textContent = 'Looking sharp — this rides your player in the match.';
+      pushMyAvatar();
+    } catch {
+      $('avatarNote').textContent = 'Could not process that image — try another.';
+    }
+  };
+  $('avatarClear').onclick = () => { myAvatar = null; drawAvatarPreview(null); $('avatarNote').textContent = 'Face removed.'; };
+}
+
 let liveFixture = null;        // host: the last fixture cast, resent to late joiners
 let lastJoinCode = '';         // client: remembered for auto-reconnect
 let lastJoinName = 'Player';
 let reconnectTries = 0;
+
+// Custom faces. myAvatar = this device's chosen face (dataURL). On the host,
+// avatars maps clientId (0 = host) → dataURL. clientAvatars maps a global player
+// index → dataURL so faces arriving before the NetView exists still get applied.
+let myAvatar = null;
+const avatars = new Map();
+const clientAvatars = {};
+
+// Mirror encodeSnapshot's ordering: global player index for a seat (A team first).
+function seatGlobalIndex(match, seatKey) {
+  const p = match.seats[seatKey];
+  if (!p) return -1;
+  return p.team.key === 'B' ? match.teamA.players.length + p.idx : p.idx;
+}
+
+// Host: decal every known avatar onto its live player and tell all clients.
+function applyAvatars(match) {
+  for (const [clientId, tex] of avatars) {
+    const seatKey = clientId === 0 ? 'H' : String(clientId);
+    const idx = seatGlobalIndex(match, seatKey);
+    if (idx < 0) continue;
+    const player = match.seats[seatKey];
+    faceTexture(tex).then((t) => setFace(player.rig, t)).catch(() => {});
+    castAll({ k: 'avatar', idx, tex });
+  }
+}
 
 // Client dropped mid-match: try to rejoin the same room a few times before
 // giving up. A successful rejoin gets the live fixture resent by the host and
@@ -859,12 +923,32 @@ $('btnHost').onclick = async () => {
     ri.apply(m.d);
   });
   net.on('left', () => {});
-  // a joiner arriving after kickoff (or reconnecting) gets the live fixture so
-  // they can render the match as a spectator instead of sitting on a blank room
+  net.on('avatar', ({ from, d }) => {
+    avatars.set(from, d);
+    // if a match is live, decal it onto that player now and tell everyone
+    if (game?.kind === 'host' && game.match) {
+      const seatKey = from === 0 ? 'H' : String(from);
+      const idx = seatGlobalIndex(game.match, seatKey);
+      const player = game.match.seats[seatKey];
+      if (idx >= 0 && player) {
+        faceTexture(d).then((t) => setFace(player.rig, t)).catch(() => {});
+        castAll({ k: 'avatar', idx, tex: d });
+      }
+    }
+  });
+  // a joiner arriving after kickoff (or reconnecting) gets the live fixture +
+  // everyone's faces so they render the match instead of sitting on a blank room
   net.on('join', ({ id }) => {
     if (liveFixture) net.to(id, liveFixture);
     if (cup) net.to(id, { k: 'bracket', html: bracketHTML(), done: false });
+    if (game?.kind === 'host' && game.match) {
+      for (const [clientId, tex] of avatars) {
+        const idx = seatGlobalIndex(game.match, clientId === 0 ? 'H' : String(clientId));
+        if (idx >= 0) net.to(id, { k: 'avatar', idx, tex });
+      }
+    }
   });
+  if (myAvatar) avatars.set(0, myAvatar); // host's own face
   net.create($('lanName').value || 'Host', null);
 };
 
@@ -880,6 +964,7 @@ $('btnJoin').onclick = async () => {
     $('lobbyRoom').classList.remove('hidden');
     $('hostControls').classList.add('hidden');
     $('clientWait').classList.remove('hidden');
+    if (myAvatar) net.sendAvatar(myAvatar); // register my face with the host
   });
   net.on('cast', (m) => handleCast(m.d));
   lastJoinCode = $('lanCode').value;
@@ -1135,8 +1220,13 @@ function handleCast(d) {
       $('bracketOverlay').classList.add('hidden');
       $('hud').classList.remove('hidden');
       showBanner(clientSide ? 'YOU PLAY!' : `SPECTATING · ${d.label}`, 2500);
+      for (const [idx, tex] of Object.entries(clientAvatars)) clientView.setFaceByIndex(+idx, tex);
       break;
     }
+    case 'avatar':
+      clientAvatars[d.idx] = d.tex;
+      clientView?.setFaceByIndex(d.idx, d.tex);
+      break;
     case 'snap':
       if (clientView) {
         clientView.applySnapshot(d);

@@ -268,6 +268,21 @@
         <div class="sub">Room code: <b id="roomCode" style="font-size:22px;letter-spacing:4px;color:#7c88b5;">----</b></div>
         <h2>Players</h2>
         <div id="rosterList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
+        <h2>Your face <span class="sub" style="font-weight:400;">(optional)</span></h2>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+          <canvas id="avatarPreview" width="64" height="64"
+            style="width:64px;height:64px;border-radius:14px;border:2px solid #edf0f5;background:#fafbfd;object-fit:cover;"></canvas>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            <div class="btnRow" style="margin:0;">
+              <label class="ghost" style="cursor:pointer;padding:8px 12px;border-radius:12px;border:2px solid #edf0f5;font-weight:700;">
+                📷 Upload photo
+                <input id="avatarFile" type="file" accept="image/*" style="display:none;" />
+              </label>
+              <button class="ghost" id="avatarClear" style="display:none;">Remove</button>
+            </div>
+            <div class="sub" id="avatarNote" style="color:#9aa2b1;">Your face is styled into the game look and shown on your player.</div>
+          </div>
+        </div>
         <h2>Your nation</h2>
         <div class="grid" id="lanTeams"></div>
         <div id="hostControls">

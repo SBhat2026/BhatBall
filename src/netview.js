@@ -2,7 +2,8 @@
 import * as THREE from 'three';
 import { BALL, FIELD, PLAYER, damp } from './config.js';
 import { playerLook, resolveKits } from './teams.js';
-import { buildRig, animateRig } from './rig.js';
+import { buildRig, animateRig, setFace } from './rig.js';
+import { faceTexture } from './avatar.js';
 import { buildLineup } from './tactics.js';
 import { buildBallMesh } from './balls.js';
 
@@ -73,6 +74,13 @@ export class NetView {
     // ball proxy so GameCamera can follow it
     this.ballProxy = { pos: this.ballCur };
     this.playerProxy = { pos: new THREE.Vector3(), heading: new THREE.Vector3(1, 0, 0) };
+  }
+
+  // Decal a custom face (dataURL) onto the player at a global index (async).
+  async setFaceByIndex(idx, dataURL) {
+    const p = this.players[idx];
+    if (!p || !dataURL) return;
+    try { setFace(p.rig, await faceTexture(dataURL)); } catch { /* skip on decode fail */ }
   }
 
   myIdx() {

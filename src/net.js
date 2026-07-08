@@ -32,6 +32,7 @@ export class Net {
   join(code, name) { this.send({ t: 'join', code, name }); }
   pickTeam(idx) { this.send({ t: 'team', idx }); }
   sendInput(d) { this.send({ t: 'input', d }); }
+  sendAvatar(d) { this.send({ t: 'avatar', d }); }
   cast(d) { this.send({ t: 'cast', d }); }
   to(id, d) { this.send({ t: 'to', id, d }); }
 }
