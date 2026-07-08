@@ -24,6 +24,7 @@ import {
   PLAYER_POOL, poolByRole, roleOf, BUDGET, squadCost, squadRating,
   defaultSquad, randomSquad, buildCustomDef, KIT_NAMES, saveSquad, loadSquad, squadState,
 } from './customteam.js';
+import { awardMatch, summary as progressSummary, BADGES } from './progress.js';
 import { TRAINED_NET } from './policy.js';
 
 // --- renderer -------------------------------------------------------------
@@ -623,6 +624,7 @@ function startSP(restore = null, sizeKey = '11') {
     lan: false, restore,
     onEnd: (m) => {
       localStorage.removeItem('pp-save');
+      awardFromMatch(m);
       const a = m.scoreA, b = m.scoreB;
       $('endTitle').textContent = 'FULL-TIME';
       $('endScore').textContent = `${m.teamA.def.code} ${a} – ${b} ${m.teamB.def.code}`;
@@ -703,6 +705,7 @@ $('btnWCPlay').onclick = () => {
         : { h: fx.h, a: fx.a, sh: m.scoreB, sa: m.scoreA };
       advanceWC(wc, res);
       saveWC();
+      awardProgress(res.sh, res.sa); // WC fixture from the human's perspective
       const won = wc.champion === wc.my;
       let ft = won ? '🏆 WORLD CHAMPIONS!' : `FULL-TIME  ${m.scoreA} – ${m.scoreB}`;
       if (m.scoreA > m.scoreB) {
@@ -930,6 +933,44 @@ if ($('btnCustomXI')) {
   if (savedInit) { myCustomDef = buildCustomDef(savedInit.players, savedInit); refreshCustomSummary(); }
 }
 
+// --- player progression (cosmetic) ------------------------------------------
+function renderProfile() {
+  const s = progressSummary();
+  $('profLevel').textContent = s.level;
+  $('profTitle').textContent = s.title;
+  $('profXP').textContent = `${s.intoLevel} / ${s.levelSpan} XP to next · ${s.xp} total`;
+  const deg = Math.round((s.intoLevel / s.levelSpan) * 360);
+  $('profLevelRing').style.background = `conic-gradient(#7fb98f ${deg}deg,#edf0f5 ${deg}deg)`;
+  const stat = (label, val) =>
+    `<div style="background:#fafbfd;border-radius:10px;padding:8px;text-align:center;"><b style="font-size:18px;">${val}</b><div class="sub" style="font-size:10px;">${label}</div></div>`;
+  $('profStats').innerHTML = stat('Matches', s.matches) + stat('Wins', s.wins) + stat('Win %', `${s.winRate}%`) + stat('Goals', s.goals);
+  const b = $('profBadges');
+  b.innerHTML = s.badges.length
+    ? s.badges.map((id) => { const bd = BADGES[id]; return bd ? `<span title="${bd.name}" style="background:#fafbfd;border-radius:10px;padding:6px 10px;font-size:13px;">${bd.icon} ${bd.name}</span>` : ''; }).join('')
+    : '<span class="sub">No badges yet — play to earn them.</span>';
+}
+if ($('btnProfile')) {
+  $('btnProfile').onclick = () => { renderProfile(); $('menu').classList.add('hidden'); $('profileOverlay').classList.remove('hidden'); };
+  $('btnProfileClose').onclick = () => { $('profileOverlay').classList.add('hidden'); $('menu').classList.remove('hidden'); };
+}
+// Award XP + toast level-ups / new badges. Scores from the player's perspective.
+function awardProgress(myScore, oppScore) {
+  const res = awardMatch({ won: myScore > oppScore, draw: myScore === oppScore, goalsFor: myScore });
+  if (res.leveledUp) showBanner(`⭐ LEVEL ${res.level} · ${res.title}`, 3000);
+  res.newBadges.forEach((id, i) => {
+    const bd = BADGES[id];
+    if (bd) setTimeout(() => showBanner(`${bd.icon} ${bd.name} unlocked!`, 2600), (res.leveledUp ? 1500 : 0) + i * 900);
+  });
+}
+// Award from a finished match, from the host/SP keyboard player's (seat H) side.
+function awardFromMatch(m) {
+  const h = m.seats?.H;
+  if (!h) return;
+  const mine = h.team.key === 'A' ? m.scoreA : m.scoreB;
+  const opp = h.team.key === 'A' ? m.scoreB : m.scoreA;
+  awardProgress(mine, opp);
+}
+
 let liveFixture = null;        // host: the last fixture cast, resent to late joiners
 let lastJoinCode = '';         // client: remembered for auto-reconnect
 let lastJoinName = 'Player';
@@ -1144,7 +1185,8 @@ function startLanMatch(e1, e2, golden, onEnd) {
 }
 
 function friendlyEnd(m) {
-  castAll({ k: 'end', text: `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}` });
+  castAll({ k: 'end', text: `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}`, a: m.scoreA, b: m.scoreB });
+  awardFromMatch(m); // host plays seat H
   $('endTitle').textContent = 'FULL-TIME';
   $('endScore').textContent = `${m.teamA.def.code} ${m.scoreA} – ${m.scoreB} ${m.teamB.def.code}`;
   $('endNote').textContent = 'Friendly over — back to the room.';
@@ -1271,7 +1313,8 @@ $('btnNextMatch').onclick = () => {
   if (!m) { advanceCup(); return; }
   startLanMatch(m.e1, m.e2, true, (mm) => {
     m.winner = mm.scoreA > mm.scoreB ? m.e1 : m.e2;
-    castAll({ k: 'end', text: `${mm.teamA.def.code} ${mm.scoreA} – ${mm.scoreB} ${mm.teamB.def.code}` });
+    castAll({ k: 'end', text: `${mm.teamA.def.code} ${mm.scoreA} – ${mm.scoreB} ${mm.teamB.def.code}`, a: mm.scoreA, b: mm.scoreB });
+    if (mm.seats?.H) awardFromMatch(mm); // host's cup fixture
     setTimeout(() => { backToRoom(); advanceCup(); }, 2800);
   });
 };
@@ -1343,6 +1386,8 @@ function handleCast(d) {
     case 'sfx': audio.event(d.n, d.a); break;
     case 'end':
       showBanner(d.text, 3000);
+      // award career XP from my side (players only, not spectators)
+      if (clientSide && d.a != null) awardProgress(clientSide === 'A' ? d.a : d.b, clientSide === 'A' ? d.b : d.a);
       setTimeout(() => {
         game = null; clientView = null;
         $('hud').classList.add('hidden');

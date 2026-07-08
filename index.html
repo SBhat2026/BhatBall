@@ -243,6 +243,31 @@
         <button class="ghost" id="btnResume" style="display:none">▶ Resume saved match</button>
         <button class="ghost" id="btnWC">🏆 World Cup</button>
         <button class="ghost" id="btnLAN">🌐 Online Room</button>
+        <button class="ghost" id="btnProfile">👤 Profile</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="profileOverlay" class="overlay hidden">
+    <div class="card" style="max-width:460px;">
+      <h1 style="font-size:24px;">👤 Your Career</h1>
+      <div style="display:flex;align-items:center;gap:16px;margin:10px 0;">
+        <div id="profLevelRing" style="width:76px;height:76px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-direction:column;background:conic-gradient(#7fb98f 0deg,#edf0f5 0deg);flex:none;">
+          <div style="width:60px;height:60px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;">
+            <b style="font-size:22px;line-height:1;" id="profLevel">1</b>
+            <span style="font-size:9px;color:#9aa2b1;">LEVEL</span>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:20px;font-weight:800;" id="profTitle">Rookie</div>
+          <div class="sub" id="profXP" style="margin-top:2px;"></div>
+        </div>
+      </div>
+      <div id="profStats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:10px 0;"></div>
+      <h2>Badges</h2>
+      <div id="profBadges" style="display:flex;flex-wrap:wrap;gap:8px;min-height:36px;"></div>
+      <div class="btnRow" style="margin-top:12px;">
+        <button class="ghost" id="btnProfileClose">← Back</button>
       </div>
     </div>
   </div>
