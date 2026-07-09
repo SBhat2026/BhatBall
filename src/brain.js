@@ -198,6 +198,13 @@ function buildSlots(match, team, world, C, players) {
           return s + (IB.press ?? 0);
         },
         target: (p) => {
+          // carrier held up close: jockey the goal-side gap instead of flying
+          // past the ball — contain, and let the tackle reflex pick its moment
+          if (owner && distXZ(p.pos, owner.pos) < 4.5) {
+            const gx = ownGoalX - owner.pos.x, gz = -owner.pos.z;
+            const gl = Math.hypot(gx, gz) || 1;
+            return { tx: owner.pos.x + (gx / gl) * 1.3, tz: owner.pos.z + (gz / gl) * 1.3 };
+          }
           interceptPoint(ball, p, PLAYER.speed * C.diff.speed, _v);
           return { tx: _v.x, tz: _v.z };
         },
@@ -219,11 +226,12 @@ function buildSlots(match, team, world, C, players) {
         score: (p) => {
           const mw = W_MARK[p.role];
           if (!mw) return null;
-          return 3.5 + dg.danger * mw - distXZ(p.pos, dg.o.pos) * 0.35 + (IB.mark ?? 0);
+          return 4.5 + dg.danger * mw - distXZ(p.pos, dg.o.pos) * 0.35 + (IB.mark ?? 0);
         },
+        // tighter: sit closer to the runner's goal-side shoulder, track their z
         target: () => ({
-          tx: dg.o.pos.x + (ownGoalX - dg.o.pos.x) * 0.14,
-          tz: dg.o.pos.z + (0 - dg.o.pos.z) * 0.08 + adapt.shiftZ * 0.3,
+          tx: dg.o.pos.x + (ownGoalX - dg.o.pos.x) * 0.08 + dg.o.vel.x * 0.25,
+          tz: dg.o.pos.z + (0 - dg.o.pos.z) * 0.05 + dg.o.vel.z * 0.25 + adapt.shiftZ * 0.3,
         }),
       });
     }
@@ -468,10 +476,18 @@ export function updateBrains(match, dt) {
       p.aiT -= dt;
       if (p.oneTwoT > 0) p.oneTwoT -= dt; // give-and-go window after playing a pass
 
-      // tackle reflex runs every frame, thoughts are throttled
+      // tackle reflex runs every frame, thoughts are throttled — pick moments:
+      // pounce on a heavy touch or from a goal-side angle; rarely dive in from
+      // behind (those are the tackles the new foul rules punish)
       if (defending && !p.tackleT && !p.stunT) {
         const d = distXZ(p.pos, ball.pos);
-        if (d < 1.9 && Math.random() < team.aggro * 0.22 * (1 + adapt.tackleBoost)) match.tackle(p);
+        if (d < 1.9) {
+          const own = ball.owner;
+          const heavy = own && distXZ(own.pos, ball.pos) > 0.75;
+          const goalSide = own && (p.pos.x - own.pos.x) * dir < 0;
+          const odds = heavy ? 0.36 : goalSide ? 0.22 : 0.07;
+          if (Math.random() < team.aggro * odds * (1 + adapt.tackleBoost)) match.tackle(p);
+        }
       }
 
       // hard rules refresh on the personal clock and pre-empt assignment
@@ -487,7 +503,14 @@ export function updateBrains(match, dt) {
           p.act = 'intercept'; p.urgency = 1;
           p.hard = true;
         } else if (p === tw.nearBall && (looseBall || defending)) {
-          interceptPoint(ball, p, PLAYER.speed * diff.speed, p.target);
+          // chasing a held ball at close range: jockey goal-side of the carrier
+          // rather than running straight through them
+          if (defending && ball.owner && distXZ(p.pos, ball.owner.pos) < 4.5) {
+            const o2 = ball.owner;
+            const gx = -dir * FIELD.halfL - o2.pos.x, gz = -o2.pos.z;
+            const gl = Math.hypot(gx, gz) || 1;
+            p.target.set(o2.pos.x + (gx / gl) * 1.3, 0, o2.pos.z + (gz / gl) * 1.3);
+          } else interceptPoint(ball, p, PLAYER.speed * diff.speed, p.target);
           p.act = 'chase'; p.urgency = 1;
           p.hard = true;
         } else p.hard = false;
@@ -585,7 +608,8 @@ export function decideOnBall(match, p) {
     // through: feed a runner into space
     const running = mate.act === 'runBehind' || mate.vel.x * dir > 2.5;
     if (running && progress > 4 * K && !blocked) {
-      const ts = 6 + style.directness * 4 + style.counter * 2 + Math.min(open, 8) * 0.8 + style.chemistry * 1.5;
+      const ts = 6 + style.directness * 4 + style.counter * 2 + Math.min(open, 8) * 0.8 + style.chemistry * 1.5
+        + (match.transTeam === team && match.transT < 2.5 ? 2 : 0); // spring the counter
       if (ts > bestThroughS) { bestThroughS = ts; bestThrough = mate; }
     }
   }

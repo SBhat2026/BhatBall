@@ -40,6 +40,12 @@ export const PLAYER = {
   kickRange: 1.55, controlRange: 1.35,
   height: 1.8,
   vis: 0.88, // visual rig scale only — physics/ranges stay in true meters
+  // Stamina tank (0..1). Regen ticks even mid-sprint, so the NET drain while
+  // holding sprint empties a full tank in ~5s and an empty tank refills in ~8s.
+  // An emptied tank locks sprint until it climbs back past `relock` so the bar
+  // can't flutter at zero. AI burns slower (burst chases, not held shift) but
+  // its burst tops out below a human's full sprint — fresh legs win the race.
+  stamina: { burn: 0.325, regen: 0.125, relock: 0.25, aiBurn: 0.24, aiBurst: 8.6 },
 };
 
 export const DIFFICULTY = {

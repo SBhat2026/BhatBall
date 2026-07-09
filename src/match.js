@@ -118,6 +118,7 @@ export class Match {
         urgency: 0.75, act: 'anchor', markT: null, oneTwoT: 0,
         aiT: 0, kickCd: 0, touchCd: 0, ownerT: 0,
         tackleT: 0, stunT: 0, holdT: 0,
+        sta: 1, staLock: false, wallHoldT: 0, inWall: false,
         lungeDir: new THREE.Vector3(),
       });
     });
@@ -179,6 +180,7 @@ export class Match {
         p.target.set(x, 0, z);
         p.aiT = 0; p.kickCd = 0; p.touchCd = 0;
         p.tackleT = 0; p.stunT = 0; p.holdT = 0;
+        p.sta = 1; p.staLock = false; p.wallHoldT = 0; p.inWall = false;
         p.rig.bicycleT = 0; p.rig.slideT = 0; p.rig.flickT = 0; p.rig.finesseT = 0;
         p.rig.kickT = 0; p.rig.chipT = 0; p.rig.throwT = 0; p.rig.diveT = 0; p.rig.headT = 0; p.rig.holdBall = false;
         p.rig.group.rotation.set(0, Math.atan2(team.dir, 0), 0);
@@ -274,7 +276,14 @@ export class Match {
         }
       }
     }
-    this.setPiece = { kind, team, taker, t: 0, ready: false };
+    // penalties + corners are whistle-gated: a longer setup, then the ref blows
+    // a second whistle and only from that moment can ANYONE (AI or human) kick
+    const readyT = kind === 'penalty' ? 2.6 : kind === 'corner' ? 2.2 : 1.4;
+    this.setPiece = {
+      kind, team, taker, t: 0, ready: false, readyT,
+      whistled: kind !== 'penalty' && kind !== 'corner',
+      aiDelay: rand(0.4, 1.0), // AI composes itself after the whistle, no snap kicks
+    };
 
     // setup targets
     const def = this.otherTeam(team);
@@ -292,10 +301,14 @@ export class Match {
     taker.vel.set(0, 0, 0);
 
     const inRange = Math.abs(goalX - x) < 32 * K;
-    const maxWall = this.sizeKey === '11' ? 3 : 2;
+    const dFK = Math.hypot(goalX - x, z);
+    // closer free kicks earn a bigger wall
+    const maxWall = this.sizeKey === '11' ? (dFK < 22 * K ? 4 : 3) : 2;
     let wallCount = 0;
     for (const t2 of [this.teamA, this.teamB]) {
       for (const p of t2.players) {
+        p.inWall = false;
+        p.wallHoldT = 0;
         if (p === taker) continue;
         if (p.isGK) { p.target.set(-p.team.dir * (halfL - 1.3), 0, 0); continue; }
         if (kind === 'penalty') {
@@ -305,8 +318,10 @@ export class Match {
           if (p.team === team && ROLE_ATT[p.role] > 0.3) {
             p.target.set(goalX - team.dir * rand(4, 11) * K, 0, rand(-8, 8) * K); // crash the box
           } else if (p.team === def && kind === 'freekick' && ROLE_ATT[p.role] < 0.75 && wallCount < maxWall) {
-            // defensive wall, 9.15m along the ball→goal line
+            // defensive wall, 9.15m along the ball→goal line — hardwired: these
+            // players are flagged and hold the line through the strike
             wallCount++;
+            p.inWall = true;
             const dx = goalX - x, dz = -z;
             const dl = Math.hypot(dx, dz) || 1;
             const wd = Math.min(9.15, dl * 0.5);
@@ -349,7 +364,11 @@ export class Match {
   _setPieceUpdate(dt, inputs, events) {
     const sp = this.setPiece;
     sp.t += dt;
-    sp.ready = sp.t > 1.4;
+    sp.ready = sp.t > sp.readyT;
+    if (sp.ready && !sp.whistled) {
+      sp.whistled = true; // the "go" whistle — kicks are legal from here
+      this.hooks.sfx?.('whistle', 1);
+    }
 
     // walk everyone to their spots
     for (const team of [this.teamA, this.teamB]) {
@@ -396,8 +415,10 @@ export class Match {
         else if (e.type === 'chip') this._takeCross(sp, e.aim);
         else if (e.type === 'shoot' || e.type === 'finesse') this._takeShot(sp, input, e.power ?? 0.6, e.type === 'finesse', e.aim);
       }
-    } else if (!seatKey || sp.t >= 9) {
+    } else if (!seatKey && sp.t >= sp.readyT + sp.aiDelay) {
       this._aiTake(sp);
+    } else if (seatKey && sp.t >= 9) {
+      this._aiTake(sp); // human dawdled — AI takes it for them
     }
   }
 
@@ -429,6 +450,15 @@ export class Match {
   }
 
   _resumeFromSetPiece(sp) {
+    // the wall jumps on the strike and holds its line briefly — no instant scatter
+    if (sp.kind === 'freekick') {
+      for (const p of this.otherTeam(sp.team).players) {
+        if (!p.inWall) continue;
+        if (!p.isHuman) p.wallHoldT = 0.5; // never freeze a human's controls
+        p.rig.headT = 0.42; // leap animation doubles as the wall jump
+        p.inWall = false;
+      }
+    }
     this.setPiece = null;
     this.state = 'PLAY';
     this.lock = { team: sp.team, t: 0.7 };
@@ -503,15 +533,44 @@ export class Match {
     const x = this.ball.pos.x, z = this.ball.pos.z;
     const dGoal = Math.hypot(goalX - x, z);
     if (sp.kind === 'throwin') return this._takeThrow(sp, null, Math.random() < 0.3);
-    if (sp.kind === 'penalty') this._takeShot(sp, null, 0.6, false);
-    else if (sp.kind === 'corner') this._takeCross(sp);
-    else if (sp.kind === 'freekick' && dGoal < 27 * K && Math.abs(z) < 16 * K) this._takeShot(sp, null, 0.55, true);
-    else if (sp.kind === 'goalkick' && Math.random() < 0.45) this._takePass(sp, null, { type: 'pass' });
-    else if (sp.kind === 'goalkick') {
-      const dir = _v.set(sp.team.dir, 0, rand(-0.5, 0.5)).normalize();
-      this.kickBall(sp.taker, dir.x * 25, 10, dir.z * 25, null);
-      this._resumeFromSetPiece(sp);
-    } else this._takeCross(sp);
+    if (sp.kind === 'penalty') return this._takeShot(sp, null, 0.6, false);
+    if (sp.kind === 'corner') return this._takeCross(sp);
+    if (sp.kind === 'freekick') {
+      // direct hit only when close, central, AND the wall doesn't seal the line;
+      // otherwise work the ball — cross into the box or play it short
+      let sealed = 0;
+      const gx = goalX - x, gz = -z;
+      const gl = Math.hypot(gx, gz) || 1;
+      for (const o of this.otherTeam(sp.team).players) {
+        const ox = o.pos.x - x, oz = o.pos.z - z;
+        const along = (ox * gx + oz * gz) / gl;
+        if (along < 1 || along > gl) continue;
+        if (Math.abs(ox * gz - oz * gx) / gl < 1.1) sealed++;
+      }
+      const shootable = dGoal < 24 * K && Math.abs(z) < 13 * K && sealed < 2;
+      if (shootable && Math.random() < 0.45) return this._takeShot(sp, null, 0.55, true);
+      if (dGoal < 30 * K) return this._takeCross(sp);
+      return this._takePass(sp, null, { type: 'pass' });
+    }
+    if (sp.kind === 'goalkick') {
+      if (Math.random() < 0.75) return this._takePass(sp, null, { type: 'pass' });
+      // the long option is still a PASS: hit the most advanced open teammate
+      let best = null, bs = -1e9;
+      for (const m of sp.team.players) {
+        if (m === sp.taker || m.isGK) continue;
+        let open = 1e9;
+        for (const o of this.otherTeam(sp.team).players) open = Math.min(open, distXZ(o.pos, m.pos));
+        const s = m.pos.x * sp.team.dir + Math.min(open, 8) * 1.2;
+        if (s > bs) { bs = s; best = m; }
+      }
+      const tx = best ? best.pos.x : sp.team.dir * 10;
+      const tz = best ? best.pos.z : rand(-10, 10);
+      const T = clamp(Math.hypot(tx - x, tz - z) / 17, 0.8, 1.7);
+      this.kickBall(sp.taker, (tx - x) / T, (BALL.g * T) / 2, (tz - z) / T, null);
+      if (best) this.ball.intendedReceiver = best;
+      return this._resumeFromSetPiece(sp);
+    }
+    this._takeCross(sp);
   }
 
   // aim: optional {x,z} world point (mouse) — beats move-key direction when present
@@ -721,32 +780,57 @@ export class Match {
         p.tackleT -= dt;
         p.vel.copy(p.lungeDir).multiplyScalar(10.5);
         // win the ball…
-        if (distXZ(p.pos, this.ball.pos) < 1.05 && this.ball.pos.y < 0.9 && p.kickCd <= 0) {
+        if (distXZ(p.pos, this.ball.pos) < 1.25 && this.ball.pos.y < 0.9 && p.kickCd <= 0) {
           _v.copy(p.lungeDir).multiplyScalar(7).add(_v2.set(rand(-2, 2), 0, rand(-2, 2)));
           _v.y = rand(0.5, 2);
           this.ball.kick(p, _v, null);
           p.kickCd = 0.5;
           p.tackleT = 0;
         } else if (owner && owner.team !== p.team && distXZ(p.pos, owner.pos) < 0.8
-                   && distXZ(p.pos, this.ball.pos) > 1.0 && Math.random() < 0.5 && !this._foulThisFrame) {
-          // …or take the man: foul
-          this._foulThisFrame = true;
-          p.tackleT = 0;
-          p.stunT = 1.0;
-          this._callFoul(p, owner);
-          return;
+                   && distXZ(p.pos, this.ball.pos) > 1.0 && !this._foulThisFrame) {
+          // …contact with the man, no ball. Front/side challenges aimed at the
+          // ball are shoulder-to-shoulder — play on. A foul is a lunge through
+          // the carrier's back, or a wild hack nowhere near the ball.
+          const behind = p.lungeDir.dot(owner.heading) > 0.35
+            && (owner.pos.x - p.pos.x) * owner.heading.x + (owner.pos.z - p.pos.z) * owner.heading.z > 0;
+          const wild = distXZ(p.pos, this.ball.pos) > 1.7;
+          if (behind || (wild && Math.random() < 0.35)) {
+            this._foulThisFrame = true;
+            p.tackleT = 0;
+            p.stunT = 1.0;
+            this._callFoul(p, owner);
+            return;
+          }
         }
         if (p.tackleT <= 0 && p.kickCd <= 0) p.stunT = 0.6;
+      } else if (p.wallHoldT > 0) {
+        // free-kick wall: hold the line through the strike instead of scattering
+        p.wallHoldT -= dt;
+        p.vel.multiplyScalar(Math.max(0, 1 - 8 * dt));
       } else if (p.isHuman) {
         const input = this._inputFor(p) ?? IDLE_INPUT;
         const m = input.moveDir();
-        const sp = input.sprinting() ? PLAYER.sprint : PLAYER.speed;
+        const ST = PLAYER.stamina;
+        if (p.staLock && p.sta >= ST.relock) p.staLock = false;
+        const sprinting = input.sprinting() && (m.x || m.z) && !p.staLock && p.sta > 0;
+        p.sta = clamp(p.sta + (ST.regen - (sprinting ? ST.burn : 0)) * dt, 0, 1);
+        if (sprinting && p.sta <= 0) p.staLock = true;
+        const sp = sprinting ? PLAYER.sprint : PLAYER.speed;
         _v.set(m.x * sp, 0, m.z * sp);
         p.vel.lerp(_v, damp(9, dt));
       } else {
         _v.set(p.target.x - p.pos.x, 0, p.target.z - p.pos.z);
         const d = _v.length();
-        const max = (p.isGK ? 5.2 : PLAYER.speed * p.team.diff.speed) * p.urgency;
+        // AI legs: full-urgency chases burst above jog pace while their (slower
+        // draining) tank lasts — but the burst tops out under a fresh human sprint
+        const ST = PLAYER.stamina;
+        if (p.staLock && p.sta >= ST.relock) p.staLock = false;
+        // the carrier never bursts — you can't sprint at top pace with the ball
+        const burst = !p.isGK && p !== owner && p.urgency >= 0.85 && d > 2.5 && !p.staLock && p.sta > 0;
+        p.sta = clamp(p.sta + (ST.regen - (burst ? ST.aiBurn : 0)) * dt, 0, 1);
+        if (burst && p.sta <= 0) p.staLock = true;
+        const top = burst ? ST.aiBurst : PLAYER.speed;
+        const max = (p.isGK ? 5.2 : top * p.team.diff.speed) * p.urgency;
         const want = Math.min(max, d * 3);
         if (d > 0.05) _v.multiplyScalar(want / d); else _v.set(0, 0, 0);
         // anti-clump: ease away from teammates on the same grass

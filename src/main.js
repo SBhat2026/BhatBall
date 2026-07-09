@@ -3,7 +3,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { TEAMS, resolveKits } from './teams.js';
+import { TEAMS, resolveKits, playerLook } from './teams.js';
 import { newCup, myFixture, advance as advanceWC, simToEnd, cupHTML, roundName } from './worldcup.js';
 import { STADIUMS, buildStadium, Confetti, BallTrail } from './stadium.js';
 import { DIFFICULTY, FIELD, setField, clamp } from './config.js';
@@ -18,7 +18,7 @@ import { flagURL, flagHTML } from './flags.js';
 import { Booth } from './commentary.js';
 import { RtcNet } from './rtc-net.js';
 import { NetView } from './netview.js';
-import { animateRig, setFace } from './rig.js';
+import { animateRig, setFace, buildRig } from './rig.js';
 import { makeAvatar, faceTexture, aiEnabled } from './avatar.js';
 import {
   PLAYER_POOL, poolByRole, roleOf, BUDGET, squadCost, squadRating,
@@ -341,6 +341,13 @@ function setScoreboard(codeA, codeB) {
 function setScore(a, b, clock) {
   $('score').textContent = `${a} – ${b}`;
   $('clock').textContent = clock;
+}
+// sprint tank: green when fresh, amber when fading, red when locked out
+function updateStaminaBar(sta, locked) {
+  $('stamwrap').classList.toggle('hidden', sta == null);
+  if (sta == null) return;
+  $('stambar').style.width = `${Math.round(sta * 100)}%`;
+  $('stambar').className = locked || sta < 0.25 ? 'low' : sta < 0.55 ? 'mid' : '';
 }
 
 const mmCtx = $('minimap').getContext('2d');
@@ -861,12 +868,95 @@ if ($('avatarFile')) {
       myAvatar = await makeAvatar(raw);
       drawAvatarPreview(myAvatar);
       $('avatarNote').textContent = 'Looking sharp — this rides your player in the match.';
+      $('avatarView').style.display = '';
       pushMyAvatar();
+      openAvatarViewer(); // show the model with the new face straight away
     } catch {
       $('avatarNote').textContent = 'Could not process that image — try another.';
     }
   };
-  $('avatarClear').onclick = () => { myAvatar = null; drawAvatarPreview(null); $('avatarNote').textContent = 'Face removed.'; };
+  $('avatarClear').onclick = () => {
+    myAvatar = null;
+    drawAvatarPreview(null);
+    $('avatarView').style.display = 'none';
+    $('avatarNote').textContent = 'Face removed.';
+  };
+  $('avatarView').onclick = () => openAvatarViewer();
+  $('avatar3dClose').onclick = () => closeAvatarViewer();
+}
+
+// --- 3D avatar preview: your player model, face applied — drag spins, wheel zooms
+let av3d = null;
+function closeAvatarViewer() {
+  if (!av3d) return;
+  cancelAnimationFrame(av3d.raf);
+  av3d.renderer.dispose();
+  av3d = null;
+  $('avatar3dOverlay').classList.add('hidden');
+}
+function openAvatarViewer() {
+  if (!myAvatar) return;
+  closeAvatarViewer();
+  $('avatar3dOverlay').classList.remove('hidden');
+  const cv = $('avatar3d');
+  const vr = new THREE.WebGLRenderer({ canvas: cv, antialias: true, alpha: true });
+  vr.setPixelRatio(Math.min(devicePixelRatio, 2));
+  vr.setSize(cv.width, cv.height, false);
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight('#ffffff', 0.85));
+  const sun = new THREE.DirectionalLight('#fff2df', 1.5);
+  sun.position.set(2.5, 4, 3);
+  scene.add(sun);
+  const disc = new THREE.Mesh(
+    new THREE.CircleGeometry(1.15, 40),
+    new THREE.MeshBasicMaterial({ color: '#c9d8c4', transparent: true, opacity: 0.55 }),
+  );
+  disc.rotation.x = -Math.PI / 2;
+  scene.add(disc);
+
+  // wear the kit of the nation picked in the lobby, styled to the player's name
+  const kit = TEAMS[myTeamPick ?? 0] ?? TEAMS[0];
+  const name = $('lanName')?.value?.trim() || 'You';
+  const look = playerLook(name);
+  const rig = buildRig(kit, look.skin, false, { number: 10, name, hairColor: look.hair });
+  scene.add(rig.group);
+  faceTexture(myAvatar).then((t) => setFace(rig, t)).catch(() => {});
+
+  const cam = new THREE.PerspectiveCamera(35, 1, 0.1, 50);
+  const orbit = { yaw: 0.5, pitch: 0.18, dist: 3.6 };
+  const place = () => {
+    const cp = Math.cos(orbit.pitch), spch = Math.sin(orbit.pitch);
+    cam.position.set(
+      Math.sin(orbit.yaw) * cp * orbit.dist,
+      1.05 + spch * orbit.dist,
+      Math.cos(orbit.yaw) * cp * orbit.dist,
+    );
+    cam.lookAt(0, 1.0, 0);
+  };
+  let drag = null;
+  cv.onpointerdown = (e) => { drag = { x: e.clientX, y: e.clientY }; cv.setPointerCapture(e.pointerId); cv.style.cursor = 'grabbing'; };
+  cv.onpointermove = (e) => {
+    if (!drag) return;
+    orbit.yaw -= (e.clientX - drag.x) * 0.012;
+    orbit.pitch = clamp(orbit.pitch + (e.clientY - drag.y) * 0.008, -0.15, 1.1);
+    drag = { x: e.clientX, y: e.clientY };
+  };
+  cv.onpointerup = () => { drag = null; cv.style.cursor = 'grab'; };
+  cv.onwheel = (e) => { e.preventDefault(); orbit.dist = clamp(orbit.dist + e.deltaY * 0.004, 1.8, 6.5); };
+
+  let last = performance.now();
+  av3d = { renderer: vr, raf: 0 };
+  const loop = () => {
+    if (!av3d || av3d.renderer !== vr) return;
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    animateRig(rig, 0, dt); // idle breathing
+    place();
+    vr.render(scene, cam);
+    av3d.raf = requestAnimationFrame(loop);
+  };
+  loop();
 }
 
 // --- custom XI builder -------------------------------------------------------
@@ -1577,6 +1667,7 @@ function frame(now) {
     drawMinimapPts(md.a, md.b, md.ball, clientFixture.kits.a.shirt, clientFixture.kits.b.shirt,
       clientSide ? game.view.playerProxy.pos : null);
     $('playerChip').textContent = game.view.myName() ?? '';
+    updateStaminaBar(clientSide ? game.view.mySta() : null, false);
     const charging = input.charging;
     $('powerwrap').style.opacity = charging ? 1 : 0;
     if (charging) $('powerbar').style.width = `${input.chargePower() * 100}%`;
@@ -1674,6 +1765,7 @@ function frame(now) {
   setScore(m.scoreA, m.scoreB, m.clockText());
   const hp = m.seats.H ?? null;
   $('playerChip').textContent = hp ? `${hp.num} · ${hp.name}` : '';
+  updateStaminaBar(hp ? hp.sta : null, !!hp?.staLock);
   drawMinimapPts(
     m.teamA.players.map((p) => p.pos), m.teamB.players.map((p) => p.pos), m.ball.pos,
     m.teamA.kit.shirt, m.teamB.kit.shirt, hp?.pos,

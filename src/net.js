@@ -95,8 +95,10 @@ export function encodeSnapshot(match) {
   // controlled map: seatKey → global player index (A players first, then B)
   const aCount = match.teamA.players.length;
   const ct = {};
+  const st = {}; // seatKey → stamina, so each client can draw its own bar
   for (const [key, p] of Object.entries(match.seats)) {
     ct[key] = p.team.key === 'B' ? aCount + p.idx : p.idx;
+    st[key] = r2(p.sta);
   }
   return {
     k: 'snap',
@@ -104,6 +106,6 @@ export function encodeSnapshot(match) {
     b: [r2(b.pos.x), r2(b.pos.y), r2(b.pos.z)],
     sc: [match.scoreA, match.scoreB],
     ck: match.clockText(),
-    ct,
+    ct, st,
   };
 }

@@ -94,6 +94,12 @@ export class NetView {
     return i >= 0 ? this.players[i]?.name ?? null : null;
   }
 
+  // host-authoritative stamina for my seat (drives the client's bar + prediction)
+  mySta() {
+    const st = this.snap?.st;
+    return st && this.myKey in st ? st[this.myKey] : 1;
+  }
+
   applySnapshot(s) {
     this.snap = s;
     // Fire one-shot animations off the freshest data (a few ms of timing offset
@@ -166,7 +172,9 @@ export class NetView {
       if (!this.pred) this.pred = { pos: me.cur.clone(), vel: new THREE.Vector3(), heading: authRotY };
       const pr = this.pred;
       // Same model the host runs for a human seat: ease velocity toward dir*speed.
-      const sp = intent.sprint ? PLAYER.sprint : PLAYER.speed;
+      // Sprint prediction respects the host-reported stamina so an empty tank
+      // doesn't predict a burst the host will refuse (reconcile would yank back).
+      const sp = intent.sprint && this.mySta() > 0.05 ? PLAYER.sprint : PLAYER.speed;
       _vt.set(intent.dir.x * sp, 0, intent.dir.z * sp);
       pr.vel.lerp(_vt, damp(9, dt));
       pr.pos.x = clamp(pr.pos.x + pr.vel.x * dt, -FIELD.halfL - 2, FIELD.halfL + 2);

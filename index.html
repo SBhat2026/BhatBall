@@ -96,6 +96,13 @@
     box-shadow: 0 4px 14px #4a4f5c22; overflow: hidden; opacity: 0; transition: opacity .15s;
   }
   #powerbar { height: 100%; width: 0%; background: linear-gradient(90deg, #a8d5b8, #f0c890, #e8a5a5); border-radius: 8px; }
+  #stamwrap {
+    position: absolute; bottom: 96px; left: 22px; width: 150px; height: 9px;
+    border-radius: 8px; background: #ffffffbb; box-shadow: 0 4px 14px #4a4f5c22; overflow: hidden;
+  }
+  #stambar { height: 100%; width: 100%; background: #a8d5b8; border-radius: 8px; transition: background .2s; }
+  #stambar.low { background: #e8a5a5; }
+  #stambar.mid { background: #f0c890; }
   #minimap {
     position: absolute; bottom: 22px; right: 22px; border-radius: 12px;
     box-shadow: 0 6px 18px #4a4f5c26;
@@ -198,8 +205,9 @@
       ▶ REPLAY &nbsp;<span style="font-weight:600;color:#d5dae4;">Enter to skip</span>
     </div>
     <div id="powerwrap"><div id="powerbar"></div></div>
+    <div id="stamwrap" class="hidden"><div id="stambar"></div></div>
     <canvas id="minimap" width="220" height="150"></canvas>
-    <div id="hint">WASD move · mouse aims · Space shoot · J pass · L lob · I finesse · B header · Tab switch · H = all controls</div>
+    <div id="hint">WASD move · Shift sprint · mouse aims · Space shoot · J pass · L lob · I finesse · B header · Tab switch · H = all controls</div>
     <div id="playerChip" style="position:absolute;bottom:64px;left:22px;font-size:13px;font-weight:800;color:#fff;background:#4a4f5caa;backdrop-filter:blur(4px);padding:6px 12px;border-radius:10px;"></div>
     <div id="helpPanel" class="hidden">
       <h3>Controls</h3>
@@ -245,6 +253,18 @@
         <button class="ghost" id="btnLAN">🌐 Online Room</button>
         <button class="ghost" id="btnProfile">👤 Profile</button>
         <button class="ghost" id="btnTheater">🎬 Theater</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="avatar3dOverlay" class="overlay hidden">
+    <div class="card" style="max-width:520px;text-align:center;">
+      <h2 style="margin-bottom:4px;">Your player</h2>
+      <div class="sub" style="color:#9aa2b1;margin-bottom:10px;">Drag to spin · scroll to zoom</div>
+      <canvas id="avatar3d" width="440" height="440"
+        style="width:min(440px,80vw);height:min(440px,80vw);border-radius:18px;background:linear-gradient(180deg,#dfe8f5,#eef3ea);cursor:grab;touch-action:none;"></canvas>
+      <div class="btnRow" style="justify-content:center;margin-top:12px;">
+        <button class="ghost" id="avatar3dClose">← Back</button>
       </div>
     </div>
   </div>
@@ -331,6 +351,7 @@
                 📷 Upload photo
                 <input id="avatarFile" type="file" accept="image/*" style="display:none;" />
               </label>
+              <button class="ghost" id="avatarView" style="display:none;">🧍 View in 3D</button>
               <button class="ghost" id="avatarClear" style="display:none;">Remove</button>
             </div>
             <div class="sub" id="avatarNote" style="color:#9aa2b1;">Your face is styled into the game look and shown on your player.</div>
