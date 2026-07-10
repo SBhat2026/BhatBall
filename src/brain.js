@@ -160,16 +160,22 @@ function buildSlots(match, team, world, C, players) {
   // phase-shifted, exactly the old anchor candidate
   const anchorTarget = (p) => {
     let bias, tz;
+    const att = ROLE_ATT[p.role] ?? 0.5;
+    // squeeze: when the ball lives in the far third the back line steps up
+    // toward halfway to compress the pitch (the keeper sweeps behind it)
+    const squeeze = att <= 0.45 && ballLX > FIELD.halfL * 0.3
+      ? Math.min((ballLX - FIELD.halfL * 0.3) * 0.42, 13 * K) * (0.55 + style.line * 0.6)
+      : 0;
     if (C.attacking) {
-      bias = (11 + (ROLE_ATT[p.role] ?? 0.5) * 9 + mood * 5) * K;
+      bias = (11 + att * 9 + mood * 5) * K + squeeze;
       tz = p.base.z * (0.72 + style.width * 0.5) + ball.pos.z * 0.15;
     } else if (C.defending) {
       const lineK = clamp(style.line - adapt.lineDrop, 0.1, 1);
-      bias = (-12 + (lineK - 0.5) * 16) * K;
+      bias = (-12 + (lineK - 0.5) * 16) * K + squeeze * 0.6;
       tz = p.base.z * 0.8 + ball.pos.z * 0.32;
       if (W_MARK[p.role]) tz += adapt.shiftZ;
     } else {
-      bias = 0;
+      bias = squeeze * 0.8;
       tz = p.base.z * 0.9 + ball.pos.z * 0.24;
     }
     let tx = dir * (p.base.x + bias) + ball.pos.x * 0.3;

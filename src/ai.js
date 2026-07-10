@@ -39,6 +39,56 @@ export function laneBlocked(match, p, tx, tz) {
   return false;
 }
 
+// distribution: a keeper with the ball picks a real pass instead of a blind
+// boot — short into an open deep outlet when the press allows, lofted long to
+// the most advanced open teammate when it doesn't (or the long ball is on).
+function gkDistribute(match, gk) {
+  const ball = match.ball;
+  const team = gk.team;
+  const K = FIELD.halfL / 52.5;
+  let short = null, shortS = -1e9, long = null, longS = -1e9, pressure = 0;
+  for (const o of match.opponentsOf(team)) if (distXZ(o.pos, gk.pos) < 22 * K) pressure++;
+  for (const m of team.players) {
+    if (m === gk) continue;
+    let open = 1e9;
+    for (const o of match.opponentsOf(team)) open = Math.min(open, distXZ(o.pos, m.pos));
+    const d = distXZ(m.pos, gk.pos);
+    if (d > 6 * K && d < 26 * K) {
+      const s = Math.min(open, 10) * 1.4 - d * 0.12
+        - (laneBlocked(match, gk, m.pos.x, m.pos.z) ? 9 : 0);
+      if (s > shortS) { shortS = s; short = m; }
+    }
+    if (d >= 18 * K) {
+      const s = (m.pos.x * team.dir) * 0.5 / K + Math.min(open, 8) * 1.1;
+      if (s > longS) { longS = s; long = m; }
+    }
+  }
+  // pressed with no safe outlet → go over the press; otherwise mostly build short
+  const goLong = long && (pressure >= 2 ? shortS < 8 : Math.random() < 0.25);
+  const mate = goLong ? long : (short ?? long);
+  ball.heldBy = null;
+  gk.kickCd = 0.4;
+  if (!mate) {
+    const dir = _v.set(team.dir, 0, rand(-0.5, 0.5)).normalize();
+    match.kickBall(gk, dir.x * 25, 10, dir.z * 25, null);
+    return;
+  }
+  const d = distXZ(mate.pos, gk.pos);
+  if (!goLong && mate === short && d < 20 * K) {
+    // firm ground pass into feet
+    const sp = clamp(8 + d * 0.8, 9, 20);
+    const ang = Math.atan2(mate.pos.z - gk.pos.z, mate.pos.x - gk.pos.x);
+    match.kickBall(gk, Math.cos(ang) * sp, 0, Math.sin(ang) * sp, null);
+  } else {
+    // lofted ball dropped just in front of the runner
+    const tx = mate.pos.x + mate.vel.x * 0.6 + team.dir * 2;
+    const tz = mate.pos.z + mate.vel.z * 0.6;
+    const T = clamp(Math.hypot(tx - gk.pos.x, tz - gk.pos.z) / 17, 0.8, 1.7);
+    match.kickBall(gk, (tx - gk.pos.x) / T, 9.81 * T / 2, (tz - gk.pos.z) / T, null);
+  }
+  ball.intendedReceiver = mate;
+}
+
 // goalkeeper brain
 export function gkUpdate(match, gk, dt) {
   const ball = match.ball;
@@ -50,12 +100,7 @@ export function gkUpdate(match, gk, dt) {
   if (gk.holdT > 0) {
     gk.holdT -= dt;
     gk.target.set(homeX + team.dir * 4, 0, 0);
-    if (gk.holdT <= 0 && ball.heldBy === gk) {
-      // boot it upfield
-      const dir = _v.set(team.dir, 0, rand(-0.5, 0.5)).normalize();
-      ball.heldBy = null;
-      match.kickBall(gk, dir.x * 25, 10, dir.z * 25, null);
-    }
+    if (gk.holdT <= 0 && ball.heldBy === gk) gkDistribute(match, gk);
     return;
   }
 
@@ -75,12 +120,54 @@ export function gkUpdate(match, gk, dt) {
     tz = clamp(tz, -zCap, zCap);
 
     const loose = !match.controllerTeam && ball.speed() < 9;
+    const freeBall = !ball.owner && !ball.heldBy;
+    // sweep: a ball played in behind that the keeper clearly reaches first is
+    // his — come off the line (even outside the box) and kill it
+    let sweeping = false;
+    if (freeBall && !ballInBox && ball.vel.x * -team.dir > 1 && ball.pos.y < 1.6) {
+      interceptPoint(ball, gk, 5.2, _v);
+      if (Math.abs(_v.x - goalX) < FIELD.boxL * 1.7) {
+        const tGK = Math.hypot(_v.x - gk.pos.x, _v.z - gk.pos.z) / 5.2;
+        let tOpp = 1e9;
+        for (const o of match.opponentsOf(team)) {
+          if (o.isGK) continue;
+          tOpp = Math.min(tOpp, Math.hypot(_v.x - o.pos.x, _v.z - o.pos.z) / 8.6);
+        }
+        sweeping = tGK < tOpp * 0.85;
+        if (sweeping) { gk.target.copy(_v); gk.urgency = 1; }
+      }
+    }
+    // breakaway: a carrier through with nobody covering the goal line — come
+    // out and sit on the ball→goal line to smother the angle
+    const own = ball.owner;
+    let challenging = false;
+    if (!sweeping && own && own.team !== team
+        && Math.abs(own.pos.x - goalX) < FIELD.boxL * 1.35 && Math.abs(own.pos.z) < FIELD.boxHalfW * 1.1) {
+      const gx = goalX - own.pos.x, gz = -own.pos.z;
+      const gl = Math.hypot(gx, gz) || 1;
+      let cover = 0;
+      for (const q of team.players) {
+        if (q === gk) continue;
+        const qx = q.pos.x - own.pos.x, qz = q.pos.z - own.pos.z;
+        const along = (qx * gx + qz * gz) / gl;
+        if (along > 0.5 && along < gl && Math.abs(qx * gz - qz * gx) / gl < 2.2) cover++;
+      }
+      challenging = cover === 0;
+      if (challenging) {
+        const rushLim = FIELD.boxL - 1.0;
+        gk.target.set(
+          clamp(own.pos.x + (gx / gl) * 2.2, Math.min(goalX, goalX + team.dir * rushLim), Math.max(goalX, goalX + team.dir * rushLim)),
+          0, clamp(own.pos.z + (gz / gl) * 2.2, -FIELD.boxHalfW, FIELD.boxHalfW),
+        );
+        gk.urgency = 1;
+      }
+    }
     if (ballInBox && (loose || (towardGoal && dBall < FIELD.boxL * 0.8))) {
       interceptPoint(ball, gk, 5.8, gk.target);
       const rushLim = FIELD.boxL - 1.5;
       gk.target.x = clamp(gk.target.x, Math.min(goalX, goalX + team.dir * rushLim), Math.max(goalX, goalX + team.dir * rushLim));
       gk.urgency = 1;
-    } else {
+    } else if (!sweeping && !challenging) {
       // Angle play: track the ball's z more tightly and step off the line for
       // CENTRAL threats (narrows the shooting angle), while staying near the
       // near post for wide ones — and never so far out that a chip beats us.
@@ -88,16 +175,22 @@ export function gkUpdate(match, gk, dt) {
       const central = 1 - Math.min(1, Math.abs(ball.pos.z) / (FIELD.goalHalf * 2.2));
       const danger = clamp(1 - dxGoal / (FIELD.boxL * 2.4), 0, 1); // 1 near box … 0 far
       const zTrack = clamp(ball.pos.z * (0.35 + 0.12 * danger), -zCap, zCap);
-      const stepOff = team.dir * (2.0 * danger * central); // advance only for central danger
+      // sweeper line: with play upfield, start from higher ground so balls in
+      // behind the (squeezed-up) defence are the keeper's first — retreating
+      // as play comes back so a chip never finds an empty net
+      const sweepLine = clamp((dxGoal - FIELD.halfL * 0.8) * 0.22, 0, FIELD.boxL * 0.55);
+      const stepOff = team.dir * Math.max(2.4 * danger * central, sweepLine);
       gk.target.set(homeX + stepOff, 0, zTrack);
       gk.urgency = 0.9;
     }
   }
 
   // save attempt (free balls only — a dribbler must be dispossessed, not smothered)
-  const reach = 1.1 + (towardGoal ? 0.7 : 0);
+  const spNow = ball.speed();
+  // a slow rolling ball is claimed with hands, not toes — a touch more reach
+  const reach = 1.1 + (towardGoal ? 0.7 : 0) + (spNow < 6 ? 0.45 : 0);
   if (!ball.owner && dBall < reach && ball.pos.y < 2.3 && gk.kickCd <= 0) {
-    const sp = ball.speed();
+    const sp = spNow;
     // quick balls at full stretch get a proper dive (lateral side via heading × toBall)
     if (gk.rig && (sp > 9 || dBall > 0.9)) {
       gk.rig.diveT = 0.62;
