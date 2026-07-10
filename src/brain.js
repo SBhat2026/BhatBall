@@ -233,7 +233,8 @@ function buildSlots(match, team, world, C, players) {
         score: (p) => {
           const mw = W_MARK[p.role];
           if (!mw) return null;
-          return 4.5 + dg.danger * mw - distXZ(p.pos, dg.o.pos) * 0.35 + (IB.mark ?? 0);
+          return 4.5 + dg.danger * mw - distXZ(p.pos, dg.o.pos) * 0.35 + (IB.mark ?? 0)
+            + (starMul(p, 'defense') - 1) * 10;
         },
         // tighter: sit closer to the runner's goal-side shoulder, track their z
         target: () => ({
@@ -380,7 +381,8 @@ function buildSlots(match, team, world, C, players) {
           if (p.role !== 'FB' && p.role !== 'WB') return null;
           if (Math.sign(ball.pos.z) !== Math.sign(p.base.z || 1)) return null;
           return 5.5 + style.width * 5 + (C.transA ? style.counter * 2 : 0)
-            - distXZ(p.pos, ball.pos) * 0.15 + (p.role === 'WB' ? 1.5 : 0) + (IB.overlap ?? 0);
+            - distXZ(p.pos, ball.pos) * 0.15 + (p.role === 'WB' ? 1.5 : 0) + (IB.overlap ?? 0)
+            + starAdd(p, 'runner');
         },
         target: (p) => ({
           tx: clamp(ball.pos.x + dir * 11 * K, -FIELD.halfL + 3, FIELD.halfL - 3),
@@ -492,7 +494,7 @@ export function updateBrains(match, dt) {
           const own = ball.owner;
           const heavy = own && distXZ(own.pos, ball.pos) > 0.75;
           const goalSide = own && (p.pos.x - own.pos.x) * dir < 0;
-          const odds = heavy ? 0.36 : goalSide ? 0.22 : 0.07;
+          const odds = (heavy ? 0.36 : goalSide ? 0.22 : 0.07) * starMul(p, 'defense');
           if (Math.random() < team.aggro * odds * (1 + adapt.tackleBoost)) match.tackle(p);
         }
       }
@@ -586,8 +588,9 @@ export function decideOnBall(match, p) {
 
   const acts = [];
 
-  // shoot
-  if (dGoal < 30 * K && Math.abs(p.pos.z) < FIELD.halfW * 0.65) {
+  // shoot (long-range specialists pull the trigger from further out)
+  const shootR = (p.star?.longshot ? 38 : 30) * K;
+  if (dGoal < shootR && Math.abs(p.pos.z) < FIELD.halfW * 0.65) {
     let blockers = 0;
     for (const o of match.opponentsOf(team)) {
       if (o.isGK) continue;
@@ -596,6 +599,7 @@ export function decideOnBall(match, p) {
     }
     let s = (30 * K - dGoal) * (0.55 / K) + style.risk * 3 - blockers * 3 - Math.abs(p.pos.z) * 0.12 / K
       + (starMul(p, 'finish') - 1) * 12;
+    if (p.star?.longshot && dGoal > 18 * K) s += 5;
     if (dGoal < 11 * K) s += 6;
     acts.push({ n: 'shoot', s, run: () => execShoot(match, p, dGoal, goalX, K) });
   }

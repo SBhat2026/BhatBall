@@ -18,7 +18,7 @@ export const TEAMS = [
   { code: 'GER', name: 'Germany', rating: 86,
     home: { shirt: '#f5f4ef', sleeve: '#454549', shorts: '#454549', gk: '#6fae85' },
     away: { shirt: '#b26fa8', sleeve: '#5c4470', shorts: '#5c4470', gk: '#d9b05c' },
-    xi: [[1,'ter Stegen'],[6,'Kimmich'],[2,'Rüdiger'],[15,'Tah'],[18,'Mittelstädt'],[16,'Pavlović'],[21,'Gündoğan'],[10,'Musiala'],[17,'Wirtz'],[7,'Havertz'],[19,'Sané']] },
+    xi: [[1,'Neuer'],[6,'Kimmich'],[2,'Rüdiger'],[15,'Tah'],[18,'Mittelstädt'],[16,'Pavlović'],[21,'Gündoğan'],[10,'Musiala'],[17,'Wirtz'],[7,'Havertz'],[19,'Sané']] },
   { code: 'ESP', name: 'Spain', rating: 90,
     home: { shirt: '#c85454', sleeve: '#e5c766', shorts: '#3d4a78', gk: '#79c9ac' },
     away: { shirt: '#a5d5ce', sleeve: '#f4f4ef', shorts: '#a5d5ce', gk: '#b985c0' },
@@ -50,7 +50,7 @@ export const TEAMS = [
   { code: 'MEX', name: 'Mexico', rating: 80,
     home: { shirt: '#4a8266', sleeve: '#4a8266', shorts: '#f4f4f0', gk: '#b58fc9' },
     away: { shirt: '#f2e8dc', sleeve: '#b04f4f', shorts: '#454549', gk: '#7fa5d9' },
-    xi: [[13,'Malagón'],[2,'J. Sánchez'],[3,'C. Montes'],[5,'J. Vásquez'],[23,'J. Gallardo'],[4,'E. Álvarez'],[18,'L. Chávez'],[26,'G. Mora'],[11,'A. Vega'],[9,'S. Giménez'],[22,'H. Lozano']] },
+    xi: [[13,'Ochoa'],[2,'J. Sánchez'],[3,'C. Montes'],[5,'J. Vásquez'],[23,'J. Gallardo'],[4,'E. Álvarez'],[18,'L. Chávez'],[26,'G. Mora'],[11,'A. Vega'],[9,'S. Giménez'],[22,'H. Lozano']] },
   { code: 'CRO', name: 'Croatia', rating: 83,
     home: { shirt: '#f0efe9', sleeve: '#f0efe9', shorts: '#f4f4f0', gk: '#5c69b8', pat: 'checkers', pat2: '#c25555' },
     away: { shirt: '#3d4352', sleeve: '#3d4352', shorts: '#3d4352', gk: '#d9d05c' },
@@ -96,7 +96,7 @@ export const PLAYER_LOOKS = {
   'Maignan': [4, K], 'Koundé': [4, K], 'Saliba': [4, K], 'Upamecano': [4, K], 'T. Hernández': [1, DB],
   'Tchouaméni': [4, K], 'Camavinga': [4, K], 'Griezmann': [1, BR], 'Barcola': [3, K], 'Mbappé': [4, K], 'Dembélé': [4, K],
   // Germany
-  'ter Stegen': [1, BR], 'Kimmich': [0, LB], 'Rüdiger': [4, K], 'Tah': [4, K], 'Mittelstädt': [1, BR],
+  'ter Stegen': [1, BR], 'Neuer': [0, LB], 'Kimmich': [0, LB], 'Rüdiger': [4, K], 'Tah': [4, K], 'Mittelstädt': [1, BR],
   'Pavlović': [1, DB], 'Gündoğan': [2, K], 'Musiala': [3, K], 'Wirtz': [0, BR], 'Havertz': [1, BR], 'Sané': [3, BL],
   // Spain
   'U. Simón': [1, BR], 'Carvajal': [2, DB], 'Le Normand': [1, BR], 'Laporte': [1, DB], 'Cucurella': [1, BR],
@@ -120,7 +120,7 @@ export const PLAYER_LOOKS = {
   'M. Turner': [1, BR], 'Dest': [3, K], 'C. Richards': [4, K], 'Ream': [0, LB], 'A. Robinson': [4, K],
   'T. Adams': [3, K], 'McKennie': [4, K], 'Reyna': [1, DB], 'Pulisic': [1, LB], 'Balogun': [4, K], 'Weah': [4, K],
   // Mexico
-  'Malagón': [2, K], 'J. Sánchez': [2, K], 'C. Montes': [2, DB], 'J. Vásquez': [2, K], 'J. Gallardo': [3, K],
+  'Malagón': [2, K], 'Ochoa': [2, K], 'J. Sánchez': [2, K], 'C. Montes': [2, DB], 'J. Vásquez': [2, K], 'J. Gallardo': [3, K],
   'E. Álvarez': [2, K], 'L. Chávez': [2, DB], 'G. Mora': [2, K], 'A. Vega': [2, K], 'S. Giménez': [1, BR], 'H. Lozano': [2, DB],
   // Croatia
   'Livaković': [1, DB], 'Stanišić': [1, BR], 'Šutalo': [1, DB], 'Gvardiol': [1, BR], 'Sosa': [1, DB],

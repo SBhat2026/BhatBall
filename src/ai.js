@@ -2,6 +2,7 @@
 // (Outfield decision-making lives in brain.js — utility-based.)
 import * as THREE from 'three';
 import { FIELD, clamp, rand } from './config.js';
+import { starMul } from './stars.js';
 
 const _v = new THREE.Vector3();
 
@@ -63,8 +64,10 @@ function gkDistribute(match, gk) {
       if (s > longS) { longS = s; long = m; }
     }
   }
-  // pressed with no safe outlet → go over the press; otherwise mostly build short
-  const goLong = long && (pressure >= 2 ? shortS < 8 : Math.random() < 0.25);
+  // pressed with no safe outlet → go over the press; otherwise mostly build
+  // short (keepers with good feet stay composed under a heavier press)
+  const pressGate = gk.star?.dribble ? 3 : 2;
+  const goLong = long && (pressure >= pressGate ? shortS < 8 : Math.random() < 0.25);
   const mate = goLong ? long : (short ?? long);
   ball.heldBy = null;
   gk.kickCd = 0.4;
@@ -188,7 +191,9 @@ export function gkUpdate(match, gk, dt) {
   // save attempt (free balls only — a dribbler must be dispossessed, not smothered)
   const spNow = ball.speed();
   // a slow rolling ball is claimed with hands, not toes — a touch more reach
-  const reach = 1.1 + (towardGoal ? 0.7 : 0) + (spNow < 6 ? 0.45 : 0);
+  // (keepers with good feet claim wider still)
+  const reach = 1.1 + (towardGoal ? 0.7 : 0) + (spNow < 6 ? 0.45 : 0)
+    + (starMul(gk, 'dribble') - 1) * 1.5;
   if (!ball.owner && dBall < reach && ball.pos.y < 2.3 && gk.kickCd <= 0) {
     const sp = spNow;
     // quick balls at full stretch get a proper dive (lateral side via heading × toBall)
@@ -201,7 +206,10 @@ export function gkUpdate(match, gk, dt) {
     // pace and a full stretch make saves miss-able
     const stretch = dBall > 1.1 ? 0.3 : 0;
     const pSave = clamp(0.95 - Math.max(0, sp - 12) * 0.032 - stretch, 0.2, 0.95);
-    if (Math.random() > pSave) {
+    // legendary keepers shrink the MISS chance — the roll stays probabilistic
+    // and the base pSave formula above is untouched
+    const pEff = 1 - (1 - pSave) / starMul(gk, 'saves');
+    if (Math.random() > pEff) {
       gk.kickCd = 0.55; // beaten — no second grab at the same ball
     } else if (sp < 16.5) {
       ball.heldBy = gk;

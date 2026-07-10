@@ -110,7 +110,7 @@ export class Match {
       team.players.push({
         team, idx: i, role: slot.role, isGK, isHuman: false, seatKey: null,
         num: entry[0], name: entry[1],
-        star: isGK ? null : starOf(entry[1]), clutchK: 1,
+        star: starOf(entry[1]), clutchK: 1,
         base: { x: slot.x, z: slot.z },
         rig,
         pos: rig.group.position,
@@ -829,7 +829,7 @@ export class Match {
         if (p.staLock && p.sta >= ST.relock) p.staLock = false;
         // the carrier never bursts — you can't sprint at top pace with the ball
         const burst = !p.isGK && p !== owner && p.urgency >= 0.85 && d > 2.5 && !p.staLock && p.sta > 0;
-        p.sta = clamp(p.sta + (ST.regen - (burst ? ST.aiBurn : 0)) * dt, 0, 1);
+        p.sta = clamp(p.sta + (ST.regen - (burst ? ST.aiBurn / starMul(p, 'engine') : 0)) * dt, 0, 1);
         if (burst && p.sta <= 0) p.staLock = true;
         const top = (burst ? ST.aiBurst : PLAYER.speed) * starMul(p, 'pace');
         // star pace never outruns a fresh human sprint (9.3)
