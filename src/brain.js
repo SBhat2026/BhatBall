@@ -15,6 +15,7 @@ import { FIELD, PLAYER, clamp, rand } from './config.js';
 import { ROLE_ATT } from './tactics.js';
 import { interceptPoint, laneBlocked } from './ai.js';
 import { runNet } from './policy.js';
+import { starMul, starAdd } from './stars.js';
 
 const _v = new THREE.Vector3();
 
@@ -345,7 +346,7 @@ function buildSlots(match, team, world, C, players) {
           const rw = W_RUN[p.role];
           if (!rw || p === owner || ballLX <= -10 * K || distXZ(p.pos, owner.pos) >= 38 * K) return null;
           return (7 + style.counter * 3 + style.chemistry * 2 + (C.transA ? 3 : 0)) * rw
-            + (buildup ? 2.5 : 0) + (IB.runBehind ?? 0);
+            + (buildup ? 2.5 : 0) + (IB.runBehind ?? 0) + starAdd(p, 'runner');
         },
         target: (p) => ({
           tx: dir * Math.min(tw.oppLine + 3 * K, FIELD.halfL - 3),
@@ -593,7 +594,8 @@ export function decideOnBall(match, p) {
       const along = (o.pos.x - p.pos.x) * dir;
       if (along > 0.5 && along < dGoal && Math.abs(o.pos.z - p.pos.z * (1 - along / dGoal)) < 1.6) blockers++;
     }
-    let s = (30 * K - dGoal) * (0.55 / K) + style.risk * 3 - blockers * 3 - Math.abs(p.pos.z) * 0.12 / K;
+    let s = (30 * K - dGoal) * (0.55 / K) + style.risk * 3 - blockers * 3 - Math.abs(p.pos.z) * 0.12 / K
+      + (starMul(p, 'finish') - 1) * 12;
     if (dGoal < 11 * K) s += 6;
     acts.push({ n: 'shoot', s, run: () => execShoot(match, p, dGoal, goalX, K) });
   }
@@ -623,7 +625,12 @@ export function decideOnBall(match, p) {
     const gate = press < 2.2 ? 4 : 0; // pressured: passing gets urgent
     acts.push({ n: 'pass', s: bestPass * 0.55 + gate, run: () => execPass(match, p, bestMate, K) });
   }
-  if (bestThrough) acts.push({ n: 'through', s: bestThroughS, run: () => execThrough(match, p, bestThrough, dir, K) });
+  if (bestThrough) {
+    acts.push({
+      n: 'through', s: bestThroughS + (starMul(p, 'vision') - 1) * 15,
+      run: () => execThrough(match, p, bestThrough, dir, K),
+    });
+  }
 
   // switch play: lofted diagonal to a free man on the far flank
   {
@@ -664,7 +671,8 @@ export function decideOnBall(match, p) {
       if (along > 0 && along < 7 && Math.abs(o.pos.z - p.pos.z) < 4) ahead = Math.min(ahead, along);
     }
     const space = ahead > 5;
-    let s = 5 + style.flair * 3 + (space ? 4 : -2) - (press < 1.5 ? 3 : 0);
+    let s = 5 + style.flair * 3 + (space ? 4 : -2) - (press < 1.5 ? 3 : 0)
+      + (starMul(p, 'dribble') - 1) * 8;
     if (match.transTeam === team && match.transT < 2.5) s += style.counter * 2;
     acts.push({ n: 'dribble', s, run: () => execFlair(match, p, style, press) });
   }
@@ -699,8 +707,10 @@ export function decideOnBall(match, p) {
 
 function execShoot(match, p, dGoal, goalX, K) {
   const diff = p.team.diff, style = p.team.style;
-  const finesse = style.flair > 0.55 && dGoal > 12 * K && dGoal < 24 * K && Math.random() < 0.45;
-  const err = (diff.shootErr * (1.05 - style.chemistry * 0.3) + dGoal * 0.003) * rand(-1, 1);
+  const finesse = (style.flair > 0.55 || p.star?.finesse) && dGoal > 12 * K && dGoal < 24 * K
+    && Math.random() < (p.star?.finesse ? 0.65 : 0.45);
+  const err = (diff.shootErr * (1.05 - style.chemistry * 0.3) + dGoal * 0.003)
+    * rand(-1, 1) / starMul(p, 'finish');
   const aimZ = (Math.random() < 0.5 ? -1 : 1) * rand(0.35, 0.8) * FIELD.goalHalf;
   const ang = Math.atan2(aimZ - p.pos.z, goalX - p.pos.x) + err;
   if (finesse) {
@@ -710,7 +720,7 @@ function execShoot(match, p, dGoal, goalX, K) {
       new THREE.Vector3(0, 5 * side * p.team.dir, 0), false, true);
     p.rig.finesseT = 0.55;
   } else {
-    const spd = clamp(16 + (28 * K - dGoal) * 0.5 + rand(0, 4), 15, 27);
+    const spd = clamp(16 + (28 * K - dGoal) * 0.5 + rand(0, 4), 15, 27) + starAdd(p, 'power');
     match.kickBall(p, Math.cos(ang) * spd, spd * rand(0.07, 0.15), Math.sin(ang) * spd,
       new THREE.Vector3(0, rand(-3, 3), 0), false, true);
   }
@@ -721,7 +731,7 @@ function execPass(match, p, mate, K) {
   const d = distXZ(mate.pos, p.pos);
   const spd = clamp(7 + d * 0.85, 9, 23);
   const t = d / spd;
-  const err = diff.passErr * (1.1 - style.chemistry * 0.5) * rand(-1, 1);
+  const err = diff.passErr * (1.1 - style.chemistry * 0.5) * rand(-1, 1) / starMul(p, 'vision');
   const tx = mate.pos.x + mate.vel.x * t * 0.8;
   const tz = mate.pos.z + mate.vel.z * t * 0.8;
   if (d > 14 && laneBlocked(match, p, tx, tz)) {
@@ -757,7 +767,8 @@ function execThrough(match, p, mate, dir, K) {
   const tz = mate.pos.z * 0.96 + mate.vel.z * 0.4;
   const d = Math.hypot(tx - p.pos.x, tz - p.pos.z);
   const spd = clamp(9 + d * 0.85, 11, 25);
-  const ang = Math.atan2(tz - p.pos.z, tx - p.pos.x) + p.team.diff.passErr * rand(-0.8, 0.8);
+  const ang = Math.atan2(tz - p.pos.z, tx - p.pos.x)
+    + p.team.diff.passErr * rand(-0.8, 0.8) / starMul(p, 'vision');
   const vx = Math.cos(ang) * spd, vz = Math.sin(ang) * spd;
   const l = Math.hypot(vx, vz) || 1;
   match.kickBall(p, vx, 0, vz, new THREE.Vector3((vz / l) * 4, 0, (-vx / l) * 4));
@@ -784,7 +795,7 @@ function execCross(match, p, goalX, dir, K) {
 
 function execFlair(match, p, style, press) {
   // tightly marked + flair: pop a sombrero over the marker
-  if (press < 1.8 && Math.random() < style.flair * 0.12) {
+  if (press < 1.8 && Math.random() < style.flair * 0.12 * starMul(p, 'flair')) {
     match.kickBall(p,
       p.heading.x * 1.5 + p.vel.x * 0.5, 6.8,
       p.heading.z * 1.5 + p.vel.z * 0.5, null);

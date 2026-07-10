@@ -7,6 +7,7 @@ import { Ball } from './ball.js';
 import { gkUpdate } from './ai.js';
 import { updateBrains, decideOnBall } from './brain.js';
 import { Scout } from './scout.js';
+import { starOf, starMul } from './stars.js';
 
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -109,6 +110,7 @@ export class Match {
       team.players.push({
         team, idx: i, role: slot.role, isGK, isHuman: false, seatKey: null,
         num: entry[0], name: entry[1],
+        star: isGK ? null : starOf(entry[1]), clutchK: 1,
         base: { x: slot.x, z: slot.z },
         rig,
         pos: rig.group.position,
@@ -829,8 +831,9 @@ export class Match {
         const burst = !p.isGK && p !== owner && p.urgency >= 0.85 && d > 2.5 && !p.staLock && p.sta > 0;
         p.sta = clamp(p.sta + (ST.regen - (burst ? ST.aiBurn : 0)) * dt, 0, 1);
         if (burst && p.sta <= 0) p.staLock = true;
-        const top = burst ? ST.aiBurst : PLAYER.speed;
-        const max = (p.isGK ? 5.2 : top * p.team.diff.speed) * p.urgency;
+        const top = (burst ? ST.aiBurst : PLAYER.speed) * starMul(p, 'pace');
+        // star pace never outruns a fresh human sprint (9.3)
+        const max = (p.isGK ? 5.2 : Math.min(top * p.team.diff.speed, 9.2)) * p.urgency;
         const want = Math.min(max, d * 3);
         if (d > 0.05) _v.multiplyScalar(want / d); else _v.set(0, 0, 0);
         // anti-clump: ease away from teammates on the same grass
@@ -921,7 +924,8 @@ export class Match {
           const d = distXZ(o.pos, best.pos);
           if (d < press) press = d;
         }
-        const heavy = Math.max(0, spd - 7) * 0.045 + (press < 2.2 ? 0.16 : 0) - (best.isHuman ? 0.06 : 0);
+        const heavy = Math.max(0, spd - 7) * 0.045 + (press < 2.2 ? 0.16 : 0)
+          - (best.isHuman ? 0.06 : 0) - (starMul(best, 'dribble') - 1) * 0.45;
         if (spd > 7 && Math.random() < heavy) {
           _v.copy(ball.vel).multiplyScalar(0.22);
           _v.x += rand(-2.5, 2.5); _v.z += rand(-2.5, 2.5); _v.y = rand(0.2, 1);
@@ -960,7 +964,7 @@ export class Match {
         if (distXZ(o.pos, owner.pos) > 1.15) continue;
         const boost = 1 + (o.team.adapt?.tackleBoost ?? 0) * 0.5;
         const aggro = o.isHuman ? 0.9 : o.team.aggro * boost;
-        const shield = owner.isHuman ? 0.75 : 1;
+        const shield = owner.isHuman ? 0.75 : 1 / starMul(owner, 'dribble');
         if (Math.random() < aggro * 0.55 * shield * dt) {
           owner.stunT = 0.3;
           if (Math.random() < 0.45) {
@@ -1178,7 +1182,7 @@ export class Match {
       const zCap = FIELD.goalHalf - 0.5;
       tz = this._aimZAtGoal(p, aim, zCap) ?? -Math.sign(p.pos.z || 1) * zCap * rand(0.35, 0.85);
       tx = goalX;
-      spd = 12 + rand(0, 3);
+      spd = (12 + rand(0, 3)) * starMul(p, 'aerial');
       vy = -2.2;                 // powered downward — a header you bury
     } else if (mode === 'clear') {
       const d = _v.set(dir, 0, rand(-0.7, 0.7)).normalize();
@@ -1216,7 +1220,7 @@ export class Match {
       for (const p of team.players) {
         if (p.isGK || p.isHuman || p.kickCd > 0 || p.stunT > 0 || p.tackleT > 0) continue;
         const d = distXZ(p.pos, ball.pos);
-        if (d < 1.7 && d < bestD) { best = p; bestD = d; }
+        if (d < 1.7 * starMul(p, 'aerial') && d < bestD) { best = p; bestD = d; }
       }
     }
     if (!best) return;
@@ -1309,6 +1313,9 @@ export class Match {
     if (d < 0) mood = Math.min(2, -d) * 0.5 * (0.35 + 0.65 * frac);
     else if (d > 0 && frac > 0.45) mood = -Math.min(2, d) * 0.4 * ((frac - 0.45) / 0.55);
     team.mood = mood;
+    // clutch stars swell when the side trails or the match enters its last quarter
+    const bigMoment = d < 0 || frac > 0.75;
+    for (const p of team.players) if (p.star?.clutch) p.clutchK = bigMoment ? 1.6 : 1;
     const b = team.baseStyle, s = team.style;
     s.line = clamp(b.line + 0.22 * mood, 0.05, 0.95);
     s.press = clamp(b.press + 0.18 * mood, 0.05, 0.95);
