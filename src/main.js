@@ -118,9 +118,18 @@ function makeReticle(scene) {
   return grp;
 }
 
-// show the aim ring while charging a mouse-aimed action
+// show the aim ring while charging a mouse-aimed action — and throughout a set
+// piece you're taking (the cursor is the delivery target)
 function updateReticle(g) {
-  const aim = input.charging ? input.aimPoint() : null;
+  let aim = input.charging ? input.aimPoint() : null;
+  const m = g.match;
+  if (!aim && m?.state === 'SETPIECE' && m.setPiece) {
+    const sp = m.setPiece;
+    const h = m.seats?.H;
+    if (h && sp.team === h.team && (sp.taker === h || sp.kind === 'goalkick')) {
+      aim = input.aimPoint();
+    }
+  }
   g.reticle.visible = !!aim;
   if (aim) g.reticle.position.set(aim.x, 0, aim.z);
 }

@@ -71,6 +71,8 @@ function gkDistribute(match, gk) {
   const mate = goLong ? long : (short ?? long);
   ball.heldBy = null;
   gk.kickCd = 0.4;
+  // release window: opponents can't smother the distribution at point-blank
+  match.lock = { team, t: 0.6, gk: true };
   if (!mate) {
     const dir = _v.set(team.dir, 0, rand(-0.5, 0.5)).normalize();
     match.kickBall(gk, dir.x * 25, 10, dir.z * 25, null);

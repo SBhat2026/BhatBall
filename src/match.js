@@ -232,6 +232,9 @@ export class Match {
 
   tackle(p) {
     if (p.tackleT > 0 || p.stunT > 0 || p.kickCd > 0.3) return;
+    // a keeper holding a save (or just releasing one) can't be slide-tackled
+    if (this.ball.heldBy && this.ball.heldBy.team !== p.team) return;
+    if (this.lock.t > 0 && this.lock.gk && p.team !== this.lock.team) return;
     _v.set(this.ball.pos.x - p.pos.x, 0, this.ball.pos.z - p.pos.z);
     if (_v.lengthSq() < 0.01) _v.copy(p.heading);
     p.lungeDir.copy(_v.normalize());
@@ -351,6 +354,13 @@ export class Match {
         } else {
           // goal kick / deep free kick: spread back out
           p.target.set(p.team.dir * p.base.x + this.ball.pos.x * 0.2, 0, p.base.z);
+          if (kind === 'goalkick' && p.team === def) {
+            // law of the game: opponents clear the penalty area until it's kicked
+            const ownGoalX = -team.dir * halfL;
+            if (Math.abs(p.target.x - ownGoalX) < FIELD.boxL + 2 && Math.abs(p.target.z) < FIELD.boxHalfW + 2) {
+              p.target.x = ownGoalX + team.dir * (FIELD.boxL + 3 + rand(0, 5));
+            }
+          }
         }
         p.target.x = clamp(p.target.x, -halfL + 1, halfL - 1);
         p.target.z = clamp(p.target.z, -halfW + 1, halfW - 1);
@@ -399,8 +409,15 @@ export class Match {
 
     if (!sp.ready) return;
 
-    const seatKey = this._seatKeyOf(sp.taker);
-    if (seatKey && sp.t < 9) {
+    // goal kicks: the GK has no seat — the team's human aims the delivery instead
+    let seatKey = this._seatKeyOf(sp.taker);
+    let delegated = false;
+    if (!seatKey && sp.kind === 'goalkick') {
+      const h = this.humanOnSide(sp.team.key);
+      if (h) { seatKey = h.seatKey; delegated = true; }
+    }
+    const takeBy = delegated ? 4 : 9; // don't stall goal kicks on an idle human
+    if (seatKey && sp.t < takeBy) {
       const evts = events[seatKey] ?? [];
       const input = inputs[seatKey] ?? IDLE_INPUT;
       if (sp.kind === 'throwin') {
@@ -413,13 +430,17 @@ export class Match {
       // face the play
       sp.taker.heading.set(sp.team.dir, 0, 0);
       for (const e of evts) {
-        if (e.type === 'pass' || e.type === 'through') this._takePass(sp, input, e);
-        else if (e.type === 'chip') this._takeCross(sp, e.aim);
+        if (sp.kind === 'goalkick') {
+          // GK delivery on the cursor: tap = pass into feet/space, held/lofted = lob
+          if (e.type === 'pass') this._takePass(sp, input, e);
+          else if (e.type === 'through' || e.type === 'chip' || e.type === 'shoot') this._takeLob(sp, e.aim);
+        } else if (e.type === 'pass' || e.type === 'through') this._takePass(sp, input, e);
+        else if (e.type === 'chip') this._takeLob(sp, e.aim);
         else if (e.type === 'shoot' || e.type === 'finesse') this._takeShot(sp, input, e.power ?? 0.6, e.type === 'finesse', e.aim);
       }
     } else if (!seatKey && sp.t >= sp.readyT + sp.aiDelay) {
       this._aiTake(sp);
-    } else if (seatKey && sp.t >= 9) {
+    } else if (seatKey && sp.t >= takeBy) {
       this._aiTake(sp); // human dawdled — AI takes it for them
     }
   }
@@ -427,15 +448,33 @@ export class Match {
   // two-handed throw from the line: short to feet, or a long hurl down the wing
   _takeThrow(sp, input, long = false, aim = null) {
     const h = sp.taker;
-    const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 3, long ? 30 : 16, long, aim);
     const infield = -Math.sign(h.pos.z) || 1;
-    let tx, tz;
-    if (mate) {
-      tx = mate.pos.x + mate.vel.x * 0.3;
-      tz = mate.pos.z + mate.vel.z * 0.3;
+    const cap = long ? 30 : 16;
+    let tx, tz, mate = null;
+    if (aim) {
+      // throw lands on the cursor (capped to a real throw's range); the nearest
+      // teammate to the spot is expected to attack it
+      const dx = aim.x - h.pos.x, dz = aim.z - h.pos.z;
+      const dd = Math.hypot(dx, dz) || 1;
+      const s = Math.min(dd, cap);
+      tx = clamp(h.pos.x + (dx / dd) * s, -FIELD.halfL + 0.5, FIELD.halfL - 0.5);
+      tz = clamp(h.pos.z + (dz / dd) * s, -FIELD.halfW + 0.5, FIELD.halfW - 0.5);
+      let bd = 1e9;
+      for (const p of sp.team.players) {
+        if (p === h || p.isGK) continue;
+        const d2 = Math.hypot(p.pos.x - tx, p.pos.z - tz);
+        if (d2 < bd) { bd = d2; mate = p; }
+      }
+      if (bd > 9) mate = null;
     } else {
-      tx = h.pos.x + h.team.dir * 6;
-      tz = h.pos.z + infield * 8;
+      mate = this._passTargetFor(h, input ?? IDLE_INPUT, 3, cap, long);
+      if (mate) {
+        tx = mate.pos.x + mate.vel.x * 0.3;
+        tz = mate.pos.z + mate.vel.z * 0.3;
+      } else {
+        tx = h.pos.x + h.team.dir * 6;
+        tz = h.pos.z + infield * 8;
+      }
     }
     const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
     const T = clamp(d / 13, 0.45, 1.15);
@@ -463,18 +502,48 @@ export class Match {
     }
     this.setPiece = null;
     this.state = 'PLAY';
-    this.lock = { team: sp.team, t: 0.7 };
+    // goal kicks are a keeper release: brief no-contest window (see lock.gk)
+    this.lock = { team: sp.team, t: 0.7, gk: sp.kind === 'goalkick' };
   }
 
   _takePass(sp, input, e) {
     const h = sp.taker;
     const mate = this._passTargetFor(h, input ?? IDLE_INPUT, 4, 40, e.type === 'through', e.aim);
-    if (!mate) return;
-    const d = distXZ(mate.pos, h.pos);
+    let tx, tz;
+    if (mate) { tx = mate.pos.x; tz = mate.pos.z; }
+    else if (e.aim) {
+      // nobody near the cursor — roll the pass into that space anyway
+      tx = clamp(e.aim.x, -FIELD.halfL + 1, FIELD.halfL - 1);
+      tz = clamp(e.aim.z, -FIELD.halfW + 1, FIELD.halfW - 1);
+    } else return;
+    const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
     const spd = clamp(7 + d * 0.9, 9, 24);
-    const ang = Math.atan2(mate.pos.z - h.pos.z, mate.pos.x - h.pos.x);
+    const ang = Math.atan2(tz - h.pos.z, tx - h.pos.x);
     this.kickBall(h, Math.cos(ang) * spd, 0, Math.sin(ang) * spd, null);
-    this.ball.intendedReceiver = mate;
+    if (mate) this.ball.intendedReceiver = mate;
+    this._resumeFromSetPiece(sp);
+  }
+
+  // lofted delivery to an exact cursor spot — the targeted lob for corners,
+  // free kicks and human-aimed goal kicks. Falls back to the classic swing
+  // (or the AI's own goal-kick logic) when there's no aim point.
+  _takeLob(sp, aim) {
+    if (!aim) return sp.kind === 'goalkick' ? this._aiTake(sp) : this._takeCross(sp);
+    const h = sp.taker;
+    const tx = clamp(aim.x, -FIELD.halfL + 1, FIELD.halfL - 1);
+    const tz = clamp(aim.z, -FIELD.halfW + 1, FIELD.halfW - 1);
+    const d = Math.hypot(tx - h.pos.x, tz - h.pos.z);
+    const T = clamp(d / 15, 0.55, 1.7);
+    const vx = (tx - h.pos.x) / T, vz = (tz - h.pos.z) / T;
+    this.kickBall(h, vx, (BALL.g * T) / 2, vz, latSpin(vx, vz, -5.5));
+    // credit the delivery to the best-placed mate near the landing spot
+    let best = null, bd = 1e9;
+    for (const p of sp.team.players) {
+      if (p === h || p.isGK) continue;
+      const dd = Math.hypot(p.pos.x - tx, p.pos.z - tz);
+      if (dd < bd) { bd = dd; best = p; }
+    }
+    if (best && bd < 10) this.ball.intendedReceiver = best;
     this._resumeFromSetPiece(sp);
   }
 
@@ -876,6 +945,24 @@ export class Match {
         }
       }
     }
+
+    // GK protection: while a keeper holds a save, opponents are held outside a
+    // ring around him — no crowding the release
+    const held = this.ball.heldBy;
+    if (held) {
+      const R = Math.max(3, 4.5 * (FIELD.halfL / 52.5));
+      for (const o of this.opponentsOf(held.team)) {
+        const dx = o.pos.x - held.pos.x, dz = o.pos.z - held.pos.z;
+        const d = Math.hypot(dx, dz);
+        if (d >= R || d < 1e-4) continue;
+        const nx = dx / d, nz = dz / d;
+        const step = Math.min(R - d, 6 * dt);
+        o.pos.x += nx * step;
+        o.pos.z += nz * step;
+        const inward = o.vel.x * nx + o.vel.z * nz;
+        if (inward < 0) { o.vel.x -= inward * nx; o.vel.z -= inward * nz; }
+      }
+    }
   }
 
   _callFoul(fouler, victim) {
@@ -1004,7 +1091,12 @@ export class Match {
     const goalX = h.team.dir * FIELD.halfL;
     const scout = this._scoutFor(h.team);
 
+    // the ball in a keeper's hands — and his release window — can't be played
+    const gkShield = !!ball.heldBy
+      || (this.lock.t > 0 && this.lock.gk && h.team !== this.lock.team);
+
     for (const e of events) {
+      if (gkShield && e.type !== 'tackle') continue; // tackle() guards itself
       switch (e.type) {
         case 'tackle':
           this.tackle(h);
@@ -1144,6 +1236,8 @@ export class Match {
     const ball = this.ball;
     if (ball.speed() < 13 || ball.heldBy || ball.owner) return;
     for (const team of [this.teamA, this.teamB]) {
+      // a keeper's release can't be blocked point-blank
+      if (this.lock.t > 0 && this.lock.gk && team !== this.lock.team) continue;
       for (const p of team.players) {
         if (p.kickCd > 0 || p === ball.intendedReceiver) continue;
         if (ball.pos.y > 1.7) continue;
@@ -1217,6 +1311,8 @@ export class Match {
 
     let best = null, bestD = 1e9;
     for (const team of [this.teamA, this.teamB]) {
+      // a keeper's lofted release can't be headed away in its protection window
+      if (this.lock.t > 0 && this.lock.gk && team !== this.lock.team) continue;
       for (const p of team.players) {
         if (p.isGK || p.isHuman || p.kickCd > 0 || p.stunT > 0 || p.tackleT > 0) continue;
         const d = distXZ(p.pos, ball.pos);
