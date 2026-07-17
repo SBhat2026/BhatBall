@@ -472,10 +472,10 @@
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'turn:77.83.142.36:3478?transport=udp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
       { urls: 'turn:77.83.142.36:3478?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
-      // TURN over 443/TCP — passes strict school/office firewalls (looks like
-      // HTTPS). Uncomment AFTER redeploying coturn with alt-listening-port=443
-      // (see tools/turn/turnserver.conf) + opening 443 in the host firewall.
-      // { urls: 'turn:77.83.142.36:443?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
+      // TURN over 443 — passes strict school/office firewalls (looks like
+      // HTTPS). Served by coturn's aux-server listener (tools/turn/fly/).
+      { urls: 'turn:77.83.142.36:443?transport=udp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
+      { urls: 'turn:77.83.142.36:443?transport=tcp', username: 'bhatball', credential: 'IXUjgXcrTHVH2NiWgAx00wC1' },
     ];
     // STRICT-FIREWALL / MULTI-REGION TURN (recommended for school Wi-Fi). Metered's
     // free tier (50GB/mo) returns geo-distributed relays INCLUDING TURN over 443,

@@ -25,6 +25,27 @@ primary_region = "sjc"
   [[services.ports]]
     port = 3478
 
+# Also serve TURN on 443 (both transports) via coturn's alt-listening-port.
+# Strict school/office firewalls block 3478 but allow 443 (it looks like HTTPS),
+# so this is what makes rooms connect on locked-down Wi-Fi.
+[[services]]
+  internal_port = 443
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 443
+
+[[services]]
+  internal_port = 443
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 443
+
 # Relay range 50000-50009/udp — coturn allocates one port per ICE agent, so this
 # supports a handful of concurrent players. Must match MIN_PORT/MAX_PORT in the
 # entrypoint. Fly.toml has no port-range syntax, hence the explicit blocks.
