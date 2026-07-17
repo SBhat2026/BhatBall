@@ -1,0 +1,26 @@
+name = "bhatball-tts-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Lock the proxy to your own site(s) so nobody else can spend your ElevenLabs quota.
+[vars]
+ALLOWED_ORIGIN = "https://sbhat2026.github.io,https://bhatball.pages.dev,http://localhost:8009,http://localhost:8000"
+
+# ELEVENLABS_API_KEY is a SECRET — never put it here. Set it once with:
+#   wrangler secret put ELEVENLABS_API_KEY
+
+# Per-IP rate limit. A booth speaks a line every ~6-10s per player, so 15/min
+# covers legit play (pbp + aside + color) while stopping quota drains.
+[[unsafe.bindings]]
+name = "TTS_LIMIT"
+type = "ratelimit"
+namespace_id = "1003"
+simple = { limit = 15, period = 60 }
+
+# Global spend guard keyed on a constant — caps TOTAL synth calls across all
+# players so a distributed flood can't drain the ElevenLabs quota.
+[[unsafe.bindings]]
+name = "GLOBAL_LIMIT"
+type = "ratelimit"
+namespace_id = "1004"
+simple = { limit = 200, period = 60 }

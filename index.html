@@ -488,6 +488,12 @@
     // (keeps the Gemini key server-side + per-IP rate limited). Without this,
     // uploaded photos are just cropped (no AI).
     window.BHATBALL_AI = { url: 'https://bhatball-ai-proxy.prismlab.workers.dev' };
+
+    // Premium booth voices (ElevenLabs) via the Worker in tools/tts-proxy/.
+    // The booth probes this once per session: if the Worker has its key,
+    // commentary speaks in broadcast voices; otherwise the free in-browser
+    // engines (Kokoro/Piper) carry on. Safe to leave set either way.
+    window.BHATBALL_TTS = { url: 'https://bhatball-tts-proxy.prismlab.workers.dev' };
   </script>
   <script type="importmap">
     { "imports": {

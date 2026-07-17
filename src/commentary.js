@@ -43,6 +43,40 @@ export function xgFor(dist, absZ, blockers = 0) {
   return Math.min(0.9, Math.max(0.02, v));
 }
 
+// --- excitement -----------------------------------------------------------------
+// One number, 0..1, drives the whole delivery: voice rate/pitch (all engines),
+// ElevenLabs style/stability, crowd duck depth (big moments let the roar bleed
+// through), and goal-call stretching. Pure so tools can unit-test the curve.
+export function excitementFor(type, ctx = {}) {
+  const BASE = {
+    kickoff: 0.45, goal: 0.72, goal_w: 0.92, goal_t: 0.62, og: 0.5,
+    save: 0.45, save_big: 0.78, nearMiss: 0.6, woodwork: 0.68, foul: 0.25,
+    penalty: 0.85, corner: 0.32, freekick: 0.35, half: 0.3, full: 0.55,
+    golden: 0.95, crowd: 0.5, reply: 0.4,
+    chain: 0.28, dominance: 0.32, dribble: 0.35, intent_commit: 0.4,
+    intent_bunker: 0.25, intent_counterpress: 0.35, levelLate: 0.5,
+    blowout: 0.25, cagey: 0.2, filler: 0.15,
+  };
+  let e = BASE[type] ?? 0.3;
+  if (type.startsWith('goal') || type === 'og') {
+    if ((ctx.min ?? 0) >= 75) e += 0.1;      // late drama
+    if ((ctx.diff ?? 2) <= 1) e += 0.08;     // equalizer / lead changing hands
+    if (ctx.golden) e = Math.max(e, 0.98);   // golden goal IS the match
+  }
+  if (type === 'penalty' && (ctx.min ?? 0) >= 75) e += 0.1;
+  if (type === 'full' && (ctx.diff ?? 2) <= 1) e += 0.2;
+  return Math.min(1, e);
+}
+
+// Stretch the first GOAL/GOL shout when the moment is big enough — the classic
+// call. Case-sensitive on purpose: DRY's lowercase "Goal." stays deadpan, and
+// HYPE's pre-stretched GOOOOOOL doesn't match \bGOAL\b so it never doubles up.
+export function emphasize(line, e = 0.3) {
+  if (e < 0.72) return line;
+  const oo = e >= 0.9 ? 'OOOOOO' : 'OOOO';
+  return line.replace(/\bGOAL\b/, `G${oo}AL`).replace(/\bGOL\b/, `G${oo}L`);
+}
+
 // --- personas -------------------------------------------------------------------
 // duo: [play-by-play, analyst] — the analyst register lands in 3d/model color.
 // voice.pbp / voice.ana = ordered preferred voice-name fragments (matched
@@ -59,6 +93,9 @@ export const PERSONAS = {
     },
     // classic British booth: deep authoritative lead + measured analyst
     kokoro: { pbp: 'bm_george', ana: 'bm_lewis' },
+    // ElevenLabs premade voices (top tier when the tts-proxy is configured):
+    // George = warm British broadcast lead, Daniel = measured British analyst
+    eleven: { pbp: 'JBFqnCBsd6RMkjVDRZzb', ana: 'onwK4e9ZLuTAKqWW03F9' },
   },
   hype: {
     // one extremely expressive, excited Latino man — same voice both mics.
@@ -73,6 +110,9 @@ export const PERSONAS = {
     // two-man Latino booth. Browser `same:true` above is only the last-ditch
     // fallback (which still has no male Spanish voice installed).
     piper: { pbp: 'es_ES-davefx-medium', ana: 'es_MX-ald-medium' },
+    // flash v2.5 is multilingual, so these read the Spanglish natively:
+    // Antoni = energetic warm lead, Liam = brighter second mic
+    eleven: { pbp: 'ErXwobaYiN019PkySvjV', ana: 'TX3LPaxmHKxFdv7VOQHJ' },
   },
   dry: {
     // Chuck & Stan: two different chill/deadpan American male voices.
@@ -84,6 +124,8 @@ export const PERSONAS = {
     },
     // deadpan American booth: steady lead + dry, low analyst
     kokoro: { pbp: 'am_michael', ana: 'am_onyx' },
+    // Brian = even American broadcast lead, Bill = older/drier second chair
+    eleven: { pbp: 'nPczCjzI2devNBz1zQrb', ana: 'pqHfZKP75CvOlQylNhV4' },
   },
 };
 
@@ -181,6 +223,16 @@ const BANK = {
       'He\'ll want that one back. You must hit the target from there.',
       'Good chance, that. The coach will note it down.',
     ],
+    crowd: [
+      'Just listen to this crowd. The noise is tremendous.',
+      'The supporters are in fine voice tonight.',
+      'Hear that? Both ends going at it. Marvellous stuff.',
+    ],
+    reply: [
+      'Quite right, Gary.',
+      'Couldn\'t have put it better myself.',
+      'No arguments from me.',
+    ],
   },
   hype: {
     kickoff: [
@@ -232,6 +284,15 @@ const BANK = {
     aside_miss: [
       '¡Increíble que no entró! The goal was BEGGING for it!',
       'He will dream of that one, te lo juro.',
+    ],
+    crowd: [
+      '¡ESCUCHA! Listen to la afición! ¡Qué ambiente!',
+      'The stadium is SHAKING, señores!',
+      '¡Los tambores, the songs! THIS is fútbol!',
+    ],
+    reply: [
+      '¡Así es, amigo! ¡Exactamente!',
+      '¡Exacto! You said it, hermano!',
     ],
   },
   dry: {
@@ -286,6 +347,16 @@ const BANK = {
     aside_miss: [
       'The data says shoot from there. The data did not say shoot like that.',
       'That miss will feature in the team meeting. Prominently.',
+    ],
+    crowd: [
+      'The crowd noise indicates feelings are being felt.',
+      'The fans are singing. Presumably about soccer.',
+      'It\'s loud in here. Someone\'s enjoying themselves.',
+    ],
+    reply: [
+      'Sure. What he said.',
+      'An astute observation. It did happen.',
+      'Correct.',
     ],
   },
 };
@@ -377,6 +448,7 @@ export class Booth {
     this.voiceOn = savedVoice === null ? true : savedVoice === '1';
     this._paintMode();
     btn.onclick = () => this.cycle();
+    this.audio.onChant = () => this._crowdMoment();
     if (typeof speechSynthesis !== 'undefined') {
       this._voices = speechSynthesis.getVoices();
       speechSynthesis.addEventListener?.('voiceschanged', () => {
@@ -429,6 +501,7 @@ export class Booth {
   detach() {
     this.match = null;
     clearTimeout(this._asideT);
+    clearTimeout(this._replyT);
     this._stopSpeech();
     this._hideTicker();
     this.audio.duckCrowd(1);
@@ -521,16 +594,24 @@ export class Booth {
     if (this.mode === 'off') return;
     this.lastKeyAt = performance.now();
     this.sum.epoch++; // key moments invalidate any pending model color
+    const m = this.match;
+    const e = excitementFor(type, {
+      min: parseInt(m.clockText()) || 0,
+      diff: Math.abs(m.scoreA - m.scoreB),
+      golden: !!m.golden,
+    });
     const line = pickLine(this.mode, type, this._slots(extra), this.recent, this.openers);
-    if (line) this._say(line, 'pbp', true);
+    if (line) this._say(line, 'pbp', true, e);
     // two-man booth: the analyst weighs in after the big moments
     const aside = type.startsWith('goal') ? 'aside_goal'
       : type === 'save_big' ? 'aside_save'
       : type === 'nearMiss' || type === 'woodwork' ? 'aside_miss' : null;
-    if (aside && !(type === 'nearMiss' && Math.random() < 0.5)) this._queueAside(aside, extra);
+    if (aside && !(type === 'nearMiss' && Math.random() < 0.5)) this._queueAside(aside, extra, 3, e * 0.75);
+    // ...and on the truly big ones the lead answers back — a real exchange
+    if (type === 'goal_w' || (type.startsWith('goal') && e >= 0.85)) this._queueReply(e * 0.7);
   }
 
-  _queueAside(type, extra, tries = 3) {
+  _queueAside(type, extra, tries = 3, e = 0.35) {
     const keyAt = this.lastKeyAt;
     clearTimeout(this._asideT);
     this._asideT = setTimeout(() => {
@@ -538,12 +619,37 @@ export class Booth {
       if (this.mode === 'off' || !this.match || this.lastKeyAt !== keyAt) return;
       if (this.speaking) {
         // play-by-play still talking — wait for the mic, don't drop the aside
-        if (tries > 0) this._queueAside(type, extra, tries - 1);
+        if (tries > 0) this._queueAside(type, extra, tries - 1, e);
         return;
       }
       const line = pickLine(this.mode, type, this._slots(extra), this.recent, this.openers);
-      if (line) this._say(line, 'ana', false);
+      if (line) this._say(line, 'ana', false, e);
     }, tries === 3 ? 3400 : 1800);
+  }
+
+  // third beat of the exchange: play-by-play acknowledges the analyst. Runs
+  // AFTER the aside slot, with the same staleness contract.
+  _queueReply(e, tries = 2) {
+    const keyAt = this.lastKeyAt;
+    clearTimeout(this._replyT);
+    this._replyT = setTimeout(() => {
+      if (this.mode === 'off' || !this.match || this.lastKeyAt !== keyAt) return;
+      if (this.speaking) {
+        if (tries > 0) this._queueReply(e, tries - 1);
+        return;
+      }
+      const line = pickLine(this.mode, 'reply', this._slots({}), this.recent, this.openers);
+      if (line) this._say(line, 'pbp', false, e);
+    }, tries === 2 ? 6600 : 2000);
+  }
+
+  // the terraces start a chant (audio.onChant) → the lead sometimes calls it out
+  _crowdMoment() {
+    if (this.mode === 'off' || !this.match || !this.live || this.speaking) return;
+    if (performance.now() - this.lastKeyAt < 9000) return;
+    if (Math.random() > 0.5 || !this._cooled('crowd', 50)) return;
+    const line = pickLine(this.mode, 'crowd', this._slots({}), this.recent, this.openers);
+    if (line) this._say(line, 'pbp', false, 0.5);
   }
 
   // ---- build-up color ------------------------------------------------------------
@@ -584,7 +690,7 @@ export class Booth {
   _templateColor() {
     const [type, extra] = this._colorTopic();
     const line = pickLine(this.mode, type, this._slots(extra), this.recent, this.openers);
-    if (line) this._say(line, 'ana', false);
+    if (line) this._say(line, 'ana', false, excitementFor(type));
   }
 
   // ---- optional model color (3b) --------------------------------------------------
@@ -714,23 +820,30 @@ export class Booth {
     return reg === 'ana' ? this._anaV : this._pbpV;
   }
 
-  _say(line, reg, interrupt) {
+  // excitement → duck depth: big moments leave more crowd under the voice so
+  // the roar carries the call instead of dying beneath it
+  _duckFor(e) { return Math.min(0.6, 0.35 + 0.25 * Math.max(0, e - 0.2)); }
+
+  _say(line, reg, interrupt, e = 0.3) {
     const p = PERSONAS[this.mode];
     const who = reg === 'ana' ? p.duo[1] : p.duo[0];
+    line = emphasize(line, e); // GOOOAL stretch on the big ones (caption too)
     this._show(line, who); // captions always render, voice or not
     if (!this.voiceOn || this.audio.muted) return;
-    // A neural engine (Kokoro for English booths, Piper for HYPE's Spanish) is
-    // the real voice once warmed; browser speech carries the booth until then
-    // (and if it ever dies). Engaging a persona kicks off the right load.
+    // Voice ladder: ElevenLabs (premium, needs the tts-proxy) → neural in-browser
+    // (Kokoro for English booths, Piper for HYPE's Spanish) → browser speech.
+    // Engaging a persona kicks off the loads; every tier degrades to the next.
     this._warmNeural();
+    const ev = this._elevenVoice(reg);
+    if (ev) { this._sayEleven(line, reg, interrupt, e, ev); return; }
     const nv = this._neuralVoice(reg);
-    if (nv) { this._sayNeural(line, reg, interrupt, nv); return; }
+    if (nv) { this._sayNeural(line, reg, interrupt, nv, e); return; }
     if (typeof speechSynthesis === 'undefined') return;
     if (!interrupt && this.speaking) return;
     const wasSpeaking = this.speaking;
     if (interrupt) this._stopSpeech();
     this.speaking = true;
-    this.audio.duckCrowd(0.35);
+    this.audio.duckCrowd(this._duckFor(e));
     const done = () => {
       this.speaking = false;
       clearInterval(this._resumeIv);
@@ -742,8 +855,11 @@ export class Booth {
         const u = new SpeechSynthesisUtterance(line);
         const v = this._voiceFor(reg);
         if (v) { u.voice = v; u.lang = v.lang; }
-        u.rate = reg === 'ana' ? p.anaRate : p.rate;
-        u.pitch = reg === 'ana' ? p.anaPitch : p.pitch;
+        // excitement bends the base persona delivery: quicker + brighter when
+        // the moment is big, settling back for asides and filler
+        const k = e - 0.35;
+        u.rate = Math.max(0.75, Math.min(1.6, (reg === 'ana' ? p.anaRate : p.rate) * (1 + 0.18 * k)));
+        u.pitch = Math.max(0.5, Math.min(1.8, (reg === 'ana' ? p.anaPitch : p.pitch) * (1 + 0.12 * k)));
         u.volume = 1;
         u.onend = done;
         u.onerror = done;
@@ -810,7 +926,8 @@ export class Booth {
       speaking: has ? speechSynthesis.speaking : null,
       kokoro: this._tts ? this._tts.state : (this._ttsDead ? 'dead' : 'unloaded'),
       piper: this._piper ? this._piper.state : (this._piperDead ? 'dead' : 'unloaded'),
-      engine: (this._neuralVoice('pbp') || {}).engine || 'browser',
+      eleven: this._el ? this._el.state : (this._elDead ? 'dead' : 'unloaded'),
+      engine: this._elevenVoice('pbp') ? 'eleven' : (this._neuralVoice('pbp') || {}).engine || 'browser',
     };
     console.log('[booth] TTS diag', info);
     if (!has) return info;
@@ -869,25 +986,120 @@ export class Booth {
   _warmNeural() {
     const P = PERSONAS[this.mode];
     if (!P) return;
+    this._warmEleven(); // top of the ladder; probes once, no download
     if (P.kokoro) this._warmTts();
     if (P.piper) this._warmPiper();
   }
 
-  _sayNeural(line, reg, interrupt, nv) {
+  // ---- premium voice (ElevenLabs via tools/tts-proxy) ------------------------------
+  // Highest tier of the ladder: one GET probe when a persona engages; if the
+  // Worker exists AND has its key, every line synthesizes server-side (mp3 →
+  // the same voice bus). Any failure retires the tier for the session and the
+  // in-browser engines carry on — same graceful-degrade contract as the rest.
+
+  _warmEleven() {
+    if (this._el || this._elDead || this.mode === 'off') return;
+    const cfg = typeof window !== 'undefined' && window.BHATBALL_TTS;
+    if (!cfg?.url || typeof fetch === 'undefined') { this._elDead = true; return; }
+    this._el = { state: 'probing', url: cfg.url.replace(/\/$/, ''), voices: cfg.voices || null, reqId: 0, pending: null, ctl: null };
+    const bail = () => { this._el = null; this._elDead = true; };
+    Promise.race([
+      fetch(this._el.url).then((r) => r.json()),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('probe timeout')), 6000)),
+    ]).then((j) => {
+      if (!this._el) return;
+      if (j?.ok && j.configured) { this._el.state = 'ready'; console.log('[booth] elevenlabs ready'); }
+      else bail();
+    }).catch(bail);
+  }
+
+  // {voice} if the premium tier is live for this persona+register, else null.
+  // window.BHATBALL_TTS.voices overrides the persona defaults per deploy.
+  _elevenVoice(reg) {
+    if (this._el?.state !== 'ready') return null;
+    const map = this._el.voices?.[this.mode] || PERSONAS[this.mode]?.eleven;
+    const id = map?.[reg === 'ana' ? 'ana' : 'pbp'];
+    return id ? { voice: id } : null;
+  }
+
+  _sayEleven(line, reg, interrupt, e, ev) {
+    if (!interrupt && this.speaking) return;
+    if (interrupt) this._stopVoice();
+    const el = this._el;
+    const id = ++el.reqId;
+    this.speaking = true;
+    this.audio.duckCrowd(this._duckFor(e));
+    const ctl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    el.pending = { id, reg };
+    el.ctl = ctl;
+    // watchdog: a synth that never lands must not hold the mic OR mute the moment
+    clearTimeout(this._voiceWd);
+    this._voiceWd = setTimeout(() => {
+      if (el.pending?.id !== id) return;
+      el.pending = null;
+      try { ctl?.abort(); } catch {}
+      this._elFail(line, reg, e, 'timeout');
+    }, 6500);
+    fetch(el.url, {
+      method: 'POST',
+      signal: ctl?.signal,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        text: line,
+        voice: ev.voice,
+        // excitement → performance: less stability + more style = bigger call
+        settings: {
+          stability: Math.max(0.2, 0.55 - 0.3 * e),
+          style: Math.min(0.75, 0.1 + 0.6 * e),
+          similarity_boost: 0.8,
+        },
+      }),
+    }).then((r) => {
+      if (!r.ok) throw new Error(`http ${r.status}`);
+      return r.arrayBuffer();
+    }).then((buf) => {
+      if (!this._el || el.pending?.id !== id) return; // superseded/barged-in
+      el.pending = null;
+      clearTimeout(this._voiceWd);
+      if (this.mode === 'off' || !this.voiceOn || this.audio.muted) { this._voiceDone(); return; }
+      this._voiceNode = this.audio.playVoiceWav(buf, () => this._voiceDone()); // decodeAudioData handles mp3
+      if (!this._voiceNode) { this._voiceDone(); return; }
+      this._voiceWd = setTimeout(() => this._voiceDone(), 15000); // backstop
+    }).catch((err) => {
+      if (!this._el || el.pending?.id !== id) return;
+      el.pending = null;
+      clearTimeout(this._voiceWd);
+      this._elFail(line, reg, e, err);
+    });
+  }
+
+  _elFail(line, reg, e, err) {
+    console.warn('[booth] elevenlabs failed → in-browser voice:', String(err));
+    this._el = null;
+    this._elDead = true; // retire the tier for the session
+    // replay this line down the ladder so the moment isn't silent
+    this._say(line, reg, true, e);
+  }
+
+  _sayNeural(line, reg, interrupt, nv, e = 0.3) {
     if (!interrupt && this.speaking) return;
     if (interrupt) this._stopVoice(); // barge-in: drop current audio + pending synth
     const P = PERSONAS[this.mode];
-    const rate = reg === 'ana' ? (P.anaRate ?? 1) : (P.rate ?? 1);
+    const base = reg === 'ana' ? (P.anaRate ?? 1) : (P.rate ?? 1);
+    const rate = base * (1 + 0.18 * (e - 0.35)); // excitement bends the pace
     const eng = this._engState(nv.engine);
     const id = ++eng.reqId;
     this.speaking = true;
-    this.audio.duckCrowd(0.35);
-    eng.pending = { id, reg };
+    this.audio.duckCrowd(this._duckFor(e));
+    // Piper synthesizes fixed-rate; excitement lands at playback instead (a
+    // touch of pitch shift comes with it — free adrenaline)
+    const pbRate = nv.engine === 'piper' ? Math.max(0.92, Math.min(1.12, 1 + 0.1 * (e - 0.35))) : 1;
+    eng.pending = { id, reg, rate: pbRate };
     // watchdog: if synthesis never returns, release the mic so the booth flows
     clearTimeout(this._voiceWd);
     this._voiceWd = setTimeout(() => this._voiceDone(), 4500 + line.length * 90);
     const msg = { t: 'gen', id, text: line, voice: nv.voice };
-    if (nv.engine === 'kokoro') msg.speed = Math.max(0.7, Math.min(1.3, rate)); // Piper voice is fixed-rate
+    if (nv.engine === 'kokoro') msg.speed = Math.max(0.7, Math.min(1.45, rate));
     eng.worker.postMessage(msg);
   }
 
@@ -900,8 +1112,8 @@ export class Booth {
     if (!data || this.mode === 'off' || !this.voiceOn || this.audio.muted) { this._voiceDone(); return; }
     clearTimeout(this._voiceWd);
     this._voiceNode = m.pcm
-      ? this.audio.playVoicePCM(m.pcm, m.sampleRate, () => this._voiceDone())
-      : this.audio.playVoiceWav(m.wav, () => this._voiceDone());
+      ? this.audio.playVoicePCM(m.pcm, m.sampleRate, () => this._voiceDone(), req.rate ?? 1)
+      : this.audio.playVoiceWav(m.wav, () => this._voiceDone(), req.rate ?? 1);
     if (!this._voiceNode) { this._voiceDone(); return; } // no audio graph → caption only
     // backstop in case onended is dropped (WAV length unknown until decoded)
     const secs = m.pcm ? m.pcm.length / (m.sampleRate || 24000) : 12;
@@ -919,6 +1131,7 @@ export class Booth {
     clearTimeout(this._voiceWd);
     if (this._tts) this._tts.pending = null;   // invalidate any in-flight synthesis
     if (this._piper) this._piper.pending = null;
+    if (this._el) { this._el.pending = null; try { this._el.ctl?.abort(); } catch {} }
     if (this._voiceNode) { try { this._voiceNode.onended = null; this._voiceNode.stop(); } catch {} this._voiceNode = null; }
   }
 

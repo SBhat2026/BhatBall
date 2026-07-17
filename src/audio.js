@@ -103,6 +103,7 @@ export class AudioEngine {
   // rhythmic clap/chant pattern from one end of the ground
   _chant() {
     if (!this.ctx || this.muted) return;
+    try { this.onChant && this.onChant(); } catch {} // booth reacts to the terraces
     const t0 = this.ctx.currentTime;
     const beats = [0, 0.32, 0.64, 1.06, 1.38, 1.7, 2.12, 2.44, 2.76];
     const pan = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
@@ -150,7 +151,7 @@ export class AudioEngine {
     this.voiceOut.connect(this.master);
   }
 
-  playVoicePCM(pcm, sampleRate, onended) {
+  playVoicePCM(pcm, sampleRate, onended, rate = 1) {
     if (!this.ctx || !pcm || !pcm.length) return null;
     this._ensureVoiceBus();
     const buf = this.ctx.createBuffer(1, pcm.length, sampleRate || 24000);
@@ -158,6 +159,7 @@ export class AudioEngine {
     else buf.getChannelData(0).set(pcm);
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
+    if (rate !== 1) src.playbackRate.value = rate;
     src.connect(this.voiceOut);
     src.onended = () => { try { onended && onended(); } catch {} };
     try { src.start(); } catch { return null; }
@@ -167,7 +169,7 @@ export class AudioEngine {
   // Piper hands back an encoded WAV; decodeAudioData is async, so return a
   // control handle immediately (with a .stop() the booth can barge-in on) and
   // wire the real source once decoded. Same interface as a BufferSource node.
-  playVoiceWav(arrayBuffer, onended) {
+  playVoiceWav(arrayBuffer, onended, rate = 1) {
     if (!this.ctx || !arrayBuffer) return null;
     this._ensureVoiceBus();
     const handle = {
@@ -179,6 +181,7 @@ export class AudioEngine {
       if (handle._stopped) return;
       const src = this.ctx.createBufferSource();
       src.buffer = buf;
+      if (rate !== 1) src.playbackRate.value = rate;
       src.connect(this.voiceOut);
       src.onended = () => { try { onended && onended(); } catch {} };
       handle._src = src;
