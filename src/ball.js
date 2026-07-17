@@ -67,14 +67,17 @@ export class Ball {
     this._sync(dt);
   }
 
-  // dribble: ball trails just ahead of the owner's feet
+  // dribble: ball trails just ahead of the owner's feet. Sprinting knocks it
+  // genuinely further ahead with looser control — faster, but the gap is a
+  // window defenders can attack (match.js reads ball-to-carrier distance).
   _follow(dt) {
     const p = this.owner;
     const sp = Math.hypot(p.vel.x, p.vel.z);
-    const lead = 0.45 + sp * 0.09;
+    const heavy = !!p.sprinting;
+    const lead = Math.min(heavy ? 1.6 : 1.3, (0.45 + sp * 0.09) * (heavy ? 1.4 : 1));
     const tx = p.pos.x + p.heading.x * lead;
     const tz = p.pos.z + p.heading.z * lead;
-    const k = 1 - Math.exp(-10 * dt);
+    const k = 1 - Math.exp(-(heavy ? 6.5 : 10) * dt);
     const nx = this.pos.x + (tx - this.pos.x) * k;
     const nz = this.pos.z + (tz - this.pos.z) * k;
     this.vel.set((nx - this.pos.x) / dt, 0, (nz - this.pos.z) / dt);

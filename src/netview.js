@@ -109,7 +109,7 @@ export class NetView {
       const p = this.players[i];
       if ((fx & 1) && !(p.fx & 1)) p.rig.bicycleT = 1.05;
       if ((fx & 2) && !(p.fx & 2)) p.rig.slideT = 0.55;
-      if ((fx & 4) && !(p.fx & 4)) p.rig.flickT = 0.4;
+      if ((fx & 4) && !(p.fx & 4)) p.rig.flickT = 0.5; // rainbow flick
       if ((fx & 8) && !(p.fx & 8)) p.rig.finesseT = 0.55;
       if ((fx & 16) && !(p.fx & 16)) p.rig.throwT = 0.45;
       if ((fx & 32) && !(p.fx & 32)) p.rig.kickT = 0.32;
@@ -117,6 +117,7 @@ export class NetView {
       if ((fx & 256) && !(p.fx & 256)) { p.rig.diveT = 0.62; p.rig.diveDir = (fx & 512) ? 1 : -1; }
       if ((fx & 1024) && !(p.fx & 1024)) p.rig.headT = 0.42;
       p.rig.holdBall = !!(fx & 128);
+      p.rig.carrying = !!(fx & 2048); // close-control stride on the carrier
       p.fx = fx;
     }
     // Timestamp on arrival and push into the interpolation buffer; trim history.

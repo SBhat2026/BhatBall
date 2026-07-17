@@ -494,7 +494,23 @@ export function updateBrains(match, dt) {
           const own = ball.owner;
           const heavy = own && distXZ(own.pos, ball.pos) > 0.75;
           const goalSide = own && (p.pos.x - own.pos.x) * dir < 0;
-          const odds = (heavy ? 0.36 : goalSide ? 0.22 : 0.07) * starMul(p, 'defense');
+          let odds = (heavy ? 0.36 : goalSide ? 0.22 : 0.07) * starMul(p, 'defense');
+          // professional foul: the break is on and nobody's home — take the
+          // hit and stop it, as long as the carrier is outside our box (a
+          // penalty is never worth it). Cynical, but that's a smart defender.
+          if (own && odds < 0.35) {
+            const ownGoalX = -dir * FIELD.halfL;
+            const dGoal = Math.hypot(ownGoalX - own.pos.x, own.pos.z);
+            const inOwnBox = Math.abs(own.pos.x - ownGoalX) < FIELD.boxL && Math.abs(own.pos.z) < FIELD.boxHalfW;
+            if (!inOwnBox && dGoal < FIELD.halfL * 0.6 && own.vel.x * -dir > 3) {
+              let cover = 0;
+              for (const m of team.players) {
+                if (m === p || m.isGK) continue;
+                if ((own.pos.x - m.pos.x) * dir > 0) cover++; // mate goal-side of the carrier
+              }
+              if (cover <= 1) odds = 0.35; // break is on, cover is thin
+            }
+          }
           if (Math.random() < team.aggro * odds * (1 + adapt.tackleBoost)) match.tackle(p);
         }
       }
@@ -798,12 +814,14 @@ function execCross(match, p, goalX, dir, K) {
 }
 
 function execFlair(match, p, style, press) {
-  // tightly marked + flair: pop a sombrero over the marker
+  // tightly marked + flair: rainbow-flick the ball up and over the marker
   if (press < 1.8 && Math.random() < style.flair * 0.12 * starMul(p, 'flair')) {
-    match.kickBall(p,
-      p.heading.x * 1.5 + p.vel.x * 0.5, 6.8,
-      p.heading.z * 1.5 + p.vel.z * 0.5, null);
-    p.rig.flickT = 0.4;
+    const fx = p.heading.x * 3.4 + p.vel.x * 0.6;
+    const fz = p.heading.z * 3.4 + p.vel.z * 0.6;
+    const fl = Math.hypot(fx, fz) || 1;
+    // topspin so it dips back down into stride after clearing the defender
+    match.kickBall(p, fx, 7.2, fz, new THREE.Vector3((fz / fl) * 4.5, 0, (-fx / fl) * 4.5));
+    p.rig.flickT = 0.5;
   }
   // otherwise: keep carrying — dribbleMove steers
 }

@@ -71,6 +71,7 @@ export class Match {
     this.owner = null;
     this.lock = { team: null, t: 0 };
     this.setPiece = null;
+    this.adv = null; // pending advantage (delayed foul whistle)
     this.pendingStrike = null;
     this._aerialCd = 0;
     this.transTeam = null;
@@ -207,6 +208,10 @@ export class Match {
     this.ball.kick(p, _v, spin, isShot);
     if (isDribble) p.kickCd = 0;
     p.touchCd = isDribble ? 0.16 : 0.1;
+    if (isDribble && p.rig) { // visible toe-tap on knock-ons, alternating feet
+      p.rig.touchT = 0.16;
+      p.rig.touchFoot = (p.rig.touchFoot ?? 1) * -1;
+    }
     const sp = Math.hypot(vx, vy, vz);
     if (isShot && this.hooks.evt) {
       // commentary tap: distance/angle/blockers feed the xG read
@@ -245,6 +250,7 @@ export class Match {
   // --- set pieces -----------------------------------------------------------
 
   enterSetPiece(kind, team, x, z) {
+    this.adv = null; // any stoppage clears a pending advantage
     const { halfL, halfW } = FIELD;
     const K = halfL / 52.5;
     x = clamp(x, -halfL + 0.2, halfL - 0.2);
@@ -732,6 +738,7 @@ export class Match {
     for (const team of [this.teamA, this.teamB]) {
       for (const p of team.players) {
         const sp = Math.hypot(p.vel.x, p.vel.z);
+        p.rig.carrying = this.ball.owner === p; // close-control stride + lean
         animateRig(p.rig, this.state === 'PLAY' || this.state === 'SETPIECE' ? sp : 0, dt);
         if (sp > 0.6 || p.tackleT > 0) {
           const h = p.tackleT > 0 ? p.lungeDir : p.heading;
@@ -749,6 +756,7 @@ export class Match {
 
   _play(dt, inputs, events) {
     this.elapsed += dt;
+    this._advTick(dt);
     if (this.elapsed >= this.halfLen * 2) {
       if (this.goldenGoal && this.scoreA === this.scoreB) {
         if (!this.golden) {
@@ -850,8 +858,8 @@ export class Match {
       } else if (p.tackleT > 0) {
         p.tackleT -= dt;
         p.vel.copy(p.lungeDir).multiplyScalar(10.5);
-        // win the ball…
-        if (distXZ(p.pos, this.ball.pos) < 1.25 && this.ball.pos.y < 0.9 && p.kickCd <= 0) {
+        // win the ball… (humans get a longer hook — player-facing balance only)
+        if (distXZ(p.pos, this.ball.pos) < (p.isHuman ? 1.45 : 1.25) && this.ball.pos.y < 0.9 && p.kickCd <= 0) {
           _v.copy(p.lungeDir).multiplyScalar(7).add(_v2.set(rand(-2, 2), 0, rand(-2, 2)));
           _v.y = rand(0.5, 2);
           this.ball.kick(p, _v, null);
@@ -861,11 +869,13 @@ export class Match {
                    && distXZ(p.pos, this.ball.pos) > 1.0 && !this._foulThisFrame) {
           // …contact with the man, no ball. Front/side challenges aimed at the
           // ball are shoulder-to-shoulder — play on. A foul is a lunge through
-          // the carrier's back, or a wild hack nowhere near the ball.
+          // the carrier's back, or a wild hack nowhere near the ball. Tired
+          // legs get clumsier: the wild-hack whistle rate climbs as the tank
+          // empties, so late-game slides are a real gamble.
           const behind = p.lungeDir.dot(owner.heading) > 0.35
             && (owner.pos.x - p.pos.x) * owner.heading.x + (owner.pos.z - p.pos.z) * owner.heading.z > 0;
           const wild = distXZ(p.pos, this.ball.pos) > 1.7;
-          if (behind || (wild && Math.random() < 0.35)) {
+          if (behind || (wild && Math.random() < 0.35 + 0.25 * (1 - p.sta))) {
             this._foulThisFrame = true;
             p.tackleT = 0;
             p.stunT = 1.0;
@@ -873,7 +883,8 @@ export class Match {
             return;
           }
         }
-        if (p.tackleT <= 0 && p.kickCd <= 0) p.stunT = 0.6;
+        // missed-tackle recovery: quicker for humans, slower on empty legs
+        if (p.tackleT <= 0 && p.kickCd <= 0) p.stunT = (p.isHuman ? 0.45 : 0.6) + 0.25 * (1 - p.sta);
       } else if (p.wallHoldT > 0) {
         // free-kick wall: hold the line through the strike instead of scattering
         p.wallHoldT -= dt;
@@ -884,6 +895,7 @@ export class Match {
         const ST = PLAYER.stamina;
         if (p.staLock && p.sta >= ST.relock) p.staLock = false;
         const sprinting = input.sprinting() && (m.x || m.z) && !p.staLock && p.sta > 0;
+        p.sprinting = sprinting; // ball.js: sprint carries push the ball further ahead
         p.sta = clamp(p.sta + (ST.regen - (sprinting ? ST.burn : 0)) * dt, 0, 1);
         if (sprinting && p.sta <= 0) p.staLock = true;
         const sp = sprinting ? PLAYER.sprint : PLAYER.speed;
@@ -896,8 +908,15 @@ export class Match {
         // draining) tank lasts — but the burst tops out under a fresh human sprint
         const ST = PLAYER.stamina;
         if (p.staLock && p.sta >= ST.relock) p.staLock = false;
-        // the carrier never bursts — you can't sprint at top pace with the ball
-        const burst = !p.isGK && p !== owner && p.urgency >= 0.85 && d > 2.5 && !p.staLock && p.sta > 0;
+        // the carrier never bursts — you can't sprint at top pace with the ball.
+        // Sprint IQ: drain the tank fully when the danger is real — the ball
+        // toward our goal and not ours (incl. loose-ball races), or a through-
+        // ball intercept. Pressing high keeps a reserve so the legs are still
+        // there when the counter comes.
+        const critical = p.act === 'intercept'
+          || (this.controllerTeam !== p.team && this.ball.pos.x * p.team.dir < 0);
+        const burst = !p.isGK && p !== owner && p.urgency >= 0.85 && d > 2.5
+          && !p.staLock && p.sta > (critical ? 0 : 0.15);
         p.sta = clamp(p.sta + (ST.regen - (burst ? ST.aiBurn / starMul(p, 'engine') : 0)) * dt, 0, 1);
         if (burst && p.sta <= 0) p.staLock = true;
         const top = (burst ? ST.aiBurst : PLAYER.speed) * starMul(p, 'pace');
@@ -966,14 +985,42 @@ export class Match {
   }
 
   _callFoul(fouler, victim) {
+    const defGoalX = -fouler.team.dir * FIELD.halfL; // fouler's own goal
+    const inBox = Math.abs(victim.pos.x - defGoalX) < FIELD.boxL && Math.abs(victim.pos.z) < FIELD.boxHalfW;
+    // Advantage: the victim still has the ball and it's not a penalty — hold
+    // the whistle and let the move play out. If their team loses it inside the
+    // window, play comes back for the original free kick.
+    if (!inBox && this.ball.owner === victim && !this.adv) {
+      this.adv = { fouler, victim, team: victim.team, spot: { x: victim.pos.x, z: victim.pos.z }, t: 2.2 };
+      this.hooks.banner('ADVANTAGE', 900);
+      return;
+    }
+    this.adv = null;
     this.hooks.banner('FOUL', 1100);
     this.hooks.sfx?.('whistle', 1);
     this.hooks.evt?.('foul', { fouler, victim });
-    const defGoalX = -fouler.team.dir * FIELD.halfL; // fouler's own goal
-    const inBox = Math.abs(victim.pos.x - defGoalX) < FIELD.boxL && Math.abs(victim.pos.z) < FIELD.boxHalfW;
     this.ball.owner = null;
     if (inBox) this.enterSetPiece('penalty', victim.team, 0, 0);
     else this.enterSetPiece('freekick', victim.team, victim.pos.x, victim.pos.z);
+  }
+
+  // delayed-whistle bookkeeping: called every PLAY tick
+  _advTick(dt) {
+    if (!this.adv) return;
+    this.adv.t -= dt;
+    const holder = this.ball.owner?.team ?? this.ball.heldBy?.team ?? null;
+    if (holder && holder !== this.adv.team) {
+      // move broke down inside the window — bring it back to the foul
+      const a = this.adv;
+      this.adv = null;
+      this.hooks.banner('FOUL — CALLED BACK', 1100);
+      this.hooks.sfx?.('whistle', 1);
+      this.hooks.evt?.('foul', { fouler: a.fouler, victim: a.victim });
+      this.ball.owner = null;
+      this.enterSetPiece('freekick', a.team, a.spot.x, a.spot.z);
+    } else if (this.adv.t <= 0) {
+      this.adv = null; // advantage played out — no call
+    }
   }
 
   _control(dt, inputs, events) {
@@ -1046,15 +1093,21 @@ export class Match {
     this.controllerTeam = owner ? owner.team : null;
 
     if (owner) {
+      // a heavy touch (ball running away from the carrier — sprinting does this)
+      // opens a window where the ball is genuinely contestable. Threshold sits
+      // above the normal carry lead (≤1.3) so only sprint-heavy touches count.
+      const loose = distXZ(this.ball.pos, owner.pos) > 1.35 ? 1.6 : 1;
       for (const o of this.opponentsOf(owner.team)) {
         if (o.stunT > 0 || o.tackleT > 0 || o.kickCd > 0) continue;
-        if (distXZ(o.pos, owner.pos) > 1.15) continue;
+        // human defenders get a longer reach + more bite in the 50/50s (player-
+        // facing balance only — AI-vs-AI keeps the sim-validated equilibrium)
+        if (distXZ(o.pos, owner.pos) > (o.isHuman ? 1.3 : 1.15)) continue;
         const boost = 1 + (o.team.adapt?.tackleBoost ?? 0) * 0.5;
-        const aggro = o.isHuman ? 0.9 : o.team.aggro * boost;
+        const aggro = o.isHuman ? 1.25 : o.team.aggro * boost;
         const shield = owner.isHuman ? 0.75 : 1 / starMul(owner, 'dribble');
-        if (Math.random() < aggro * 0.55 * shield * dt) {
+        if (Math.random() < aggro * 0.55 * shield * loose * dt) {
           owner.stunT = 0.3;
-          if (Math.random() < 0.45) {
+          if (Math.random() < (o.isHuman ? 0.65 : 0.45)) {
             ball.owner = o;
             o.ownerT = 0;
             ball.lastTouch = o;
@@ -1203,12 +1256,14 @@ export class Match {
           break;
         }
 
-        case 'sombrero': {
+        case 'sombrero': { // Q — rainbow flick: up and OVER, forward past the marker
           if (dBall > 1.3 || ball.pos.y > 0.8 || h.kickCd > 0) break;
-          this.kickBall(h,
-            h.heading.x * 1.5 + h.vel.x * 0.5, 6.8,
-            h.heading.z * 1.5 + h.vel.z * 0.5, null);
-          h.rig.flickT = 0.4;
+          const fx = h.heading.x * 3.4 + h.vel.x * 0.6;
+          const fz = h.heading.z * 3.4 + h.vel.z * 0.6;
+          const fl = Math.hypot(fx, fz) || 1;
+          // topspin: the ball dips after cresting so it drops back into stride
+          this.kickBall(h, fx, 7.2, fz, new THREE.Vector3((fz / fl) * 4.5, 0, (-fx / fl) * 4.5));
+          h.rig.flickT = 0.5;
           break;
         }
 
@@ -1365,6 +1420,7 @@ export class Match {
         const scorer = this.teamA.dir === sideSign ? this.teamA : this.teamB;
         if (scorer === this.teamA) this.scoreA++; else this.scoreB++;
         this.concededTeam = this.otherTeam(scorer);
+        this.adv = null; // goal stands — pending advantage is moot
         this.state = 'GOAL';
         this.stateT = 3;
         this.hooks.onGoal(scorer, ball.pos.x, ball.pos.z, ball.lastTouch);

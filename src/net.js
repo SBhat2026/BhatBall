@@ -69,14 +69,15 @@ export class RemoteInput {
 const r2 = (v) => Math.round(v * 100) / 100;
 
 // one-shot anim bits (1..64, 256 rising-edge triggered on viewers; 128 is a
-// held state, 512 carries the dive's lateral direction)
+// held state, 512 carries the dive's lateral direction, 2048 = on-the-ball
+// close-control stride, also held)
 export function rigFx(rig) {
   return (rig.bicycleT > 0 ? 1 : 0) | (rig.slideT > 0 ? 2 : 0)
     | (rig.flickT > 0 ? 4 : 0) | (rig.finesseT > 0 ? 8 : 0)
     | (rig.throwT > 0 ? 16 : 0) | (rig.kickT > 0 ? 32 : 0)
     | (rig.chipT > 0 ? 64 : 0) | (rig.holdBall ? 128 : 0)
     | (rig.diveT > 0 ? 256 : 0) | (rig.diveDir > 0 ? 512 : 0)
-    | (rig.headT > 0 ? 1024 : 0);
+    | (rig.headT > 0 ? 1024 : 0) | (rig.carrying ? 2048 : 0);
 }
 
 export function encodeSnapshot(match) {

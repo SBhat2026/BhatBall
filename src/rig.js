@@ -183,7 +183,10 @@ export function buildRig(kit, skinTone, isGK, opts = {}) {
     idleT: Math.random() * 6.28, // breathing / idle sway clock
     bicycleT: 0,  // 1.05s three-phase backflip
     slideT: 0,    // slide tackle
-    flickT: 0,    // sombrero heel flick
+    flickT: 0,    // rainbow flick: drag up the calf, heel it overhead
+    touchT: 0,    // dribble knock-on toe tap
+    touchFoot: 1, // which foot taps (alternates)
+    carrying: false, // close-control stride while on the ball
     finesseT: 0,  // curled-shot follow-through
     kickT: 0,     // standard strike: plant + leg swings through
     headT: 0,     // header: leap, arch back, snap forward to nod the ball
@@ -336,16 +339,36 @@ export function animateRig(rig, speed, dt) {
     return;
   }
 
-  // --- sombrero: hop + heel flick ---
+  // --- rainbow flick: drag the ball up the calf, then heel it over the head ---
   if (rig.flickT > 0) {
     rig.flickT = Math.max(0, rig.flickT - dt);
-    const q = 1 - rig.flickT / 0.4;
-    const s = Math.sin(q * Math.PI);
-    g.position.y = 0.14 * s;
-    rig.legR.rotation.x = 1.5 * s;        // heel snaps up behind
-    rig.kneeR.rotation.x = -1.6 * s;      // shin folds so the heel does the work
-    rig.legL.rotation.x = -0.3 * s;
-    rig.armL.rotation.x = -0.6 * s; rig.armR.rotation.x = -0.6 * s;
+    const q = 1 - rig.flickT / 0.5;
+    if (q < 0.4) {
+      // 1. drag: trail leg pins the ball against the calf, body over it
+      const w = q / 0.4;
+      g.rotation.x = 0.12 * w;                 // lean over the ball
+      rig.legR.rotation.x = 0.7 * w;           // trail leg back, toe down
+      rig.kneeR.rotation.x = -0.5 * w;
+      rig.legL.rotation.x = -0.15 * w;
+      rig.kneeL.rotation.x = -0.3 * w;
+    } else {
+      // 2. flick: hop, heel whips up high behind, head tilts to watch it sail
+      const w = (q - 0.4) / 0.6;
+      const s = Math.sin(w * Math.PI);
+      g.position.y = 0.18 * s;
+      g.rotation.x = 0.12 - 0.3 * s;           // arch back under the ball
+      rig.legR.rotation.x = 0.7 + 1.3 * s;     // heel arcs up and over
+      rig.kneeR.rotation.x = -0.5 - 1.7 * s;   // shin folds hard — heel does the work
+      rig.legL.rotation.x = -0.15 - 0.25 * s;
+      rig.kneeL.rotation.x = -0.3 * (1 - w);
+      rig.armL.rotation.x = -0.9 * s; rig.armR.rotation.x = -0.9 * s; // arms flare for balance
+      rig.armL.rotation.z = -0.5 * s; rig.armR.rotation.z = 0.5 * s;
+      if (rig.flickT <= 0) {
+        g.rotation.x = 0; g.position.y = 0;
+        rig.kneeR.rotation.x = 0; rig.kneeL.rotation.x = 0;
+        rig.armL.rotation.z = 0; rig.armR.rotation.z = 0;
+      }
+    }
     return;
   }
 
@@ -401,13 +424,29 @@ export function animateRig(rig, speed, dt) {
   // Full-run (run=1) and full-idle (run=0) poses are identical to before.
   rig.dispSpeed = (rig.dispSpeed ?? speed) + (speed - (rig.dispSpeed ?? speed)) * Math.min(1, dt * 10);
   const sp = rig.dispSpeed;
-  rig.phase += Math.min(sp, 10) * dt * 1.55;
-  const amp = Math.min(sp / 8, 1) * 0.85;
+  // close control: on the ball the stride goes quicker and choppier — shorter
+  // steps, more of them — the classic dribbling cadence
+  const carry = rig.carrying ? 1 : 0;
+  rig.phase += Math.min(sp, 10) * dt * (1.55 + 0.35 * carry);
+  const amp = Math.min(sp / 8, 1) * (0.85 - 0.18 * carry);
   const s = Math.sin(rig.phase);
   const run = Math.min(1, Math.max(0, (sp - 0.15) / 1.05)); // 0 = idle … 1 = running
   const idle = 1 - run;
   const b = Math.sin(rig.idleT * 1.7);              // breathing sway
   const mix = (r, i) => r * run + i * idle;
+
+  // bank into turns: derive yaw rate from the group's own heading so every
+  // caller (match, netview, theater) gets the lean for free
+  let yawRate = 0;
+  if (dt > 0 && rig._lastYaw !== undefined) {
+    let dy = g.rotation.y - rig._lastYaw;
+    dy = ((dy + Math.PI) % TAU + TAU) % TAU - Math.PI;
+    yawRate = dy / dt;
+  }
+  rig._lastYaw = g.rotation.y;
+  const bankTarget = Math.max(-0.22, Math.min(0.22, -yawRate * 0.055)) * run * Math.min(sp / 6, 1);
+  rig._bank = (rig._bank ?? 0) + (bankTarget - (rig._bank ?? 0)) * Math.min(1, dt * 8);
+  g.rotation.z = rig._bank;
 
   rig.legL.rotation.x = mix(s * amp, s * amp * 0.2);
   rig.legR.rotation.x = mix(-s * amp, -s * amp * 0.2);
@@ -418,6 +457,17 @@ export function animateRig(rig, speed, dt) {
   rig.armR.rotation.x = mix(s * amp * 0.7, -0.05 + 0.03 * b);
   rig.elbL.rotation.x = mix(amp * (0.85 + 0.2 * s), 0.22 + 0.04 * b);
   rig.elbR.rotation.x = mix(amp * (0.85 - 0.2 * s), 0.22 + 0.04 * b);
-  rig.torso.rotation.x = mix(0.16 * Math.min(sp / 8, 1), 0.02 + 0.015 * b);
+  // on the ball: a touch more forward lean, eyes over the ball
+  rig.torso.rotation.x = mix(0.16 * Math.min(sp / 8, 1) + 0.08 * carry * run, 0.02 + 0.015 * b);
   g.position.y = Math.abs(Math.cos(rig.phase)) * 0.045 * amp * run;   // stride bob fades out
+
+  // dribble knock-on: a quick toe flick of the touching foot layered on the run
+  if (rig.touchT > 0) {
+    rig.touchT = Math.max(0, rig.touchT - dt);
+    const tq = Math.sin((1 - rig.touchT / 0.16) * Math.PI);
+    const leg = rig.touchFoot > 0 ? rig.legR : rig.legL;
+    const knee = rig.touchFoot > 0 ? rig.kneeR : rig.kneeL;
+    leg.rotation.x -= 0.5 * tq;   // leg extends into the ball
+    knee.rotation.x += 0.3 * tq;  // knee straightens for the poke
+  }
 }
