@@ -16,7 +16,7 @@ ETH_IP="$(ip -4 -o addr show eth0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 |
 : "${EXTERNAL_IP:?set EXTERNAL_IP to the app's dedicated IPv4 (fly secrets set)}"
 : "${TURN_PASSWORD:?set TURN_PASSWORD (fly secrets set)}"
 : "${MIN_PORT:=50000}"
-: "${MAX_PORT:=50009}"
+: "${MAX_PORT:=50039}"
 
 echo "coturn: bind=${FGS_IP}+${ETH_IP:-none} external=${EXTERNAL_IP} relay=${MIN_PORT}-${MAX_PORT}"
 

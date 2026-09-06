@@ -1,10 +1,27 @@
 # coturn TURN relay for BhatBall Online Rooms, on Fly.io.
 # Needs a DEDICATED IPv4 (fly ips allocate-v4) — shared IPs only serve 80/443.
 # Deploy: see tools/turn/fly/README.md
+#
+# EVERY service block below pins auto_stop_machines = "off",
+# auto_start_machines = false and min_machines_running = 1. This is not
+# boilerplate: a service block that omits them inherits Fly's autostop default,
+# and ONE such block is enough to scale the whole machine to zero. That is what
+# happened on 2026-07-21 — the relay-range blocks had no autostop settings, the
+# machine stopped, and with auto_start false it never came back. Rooms then
+# worked on lenient home wifi (STUN) and silently hung on school/office/cellular
+# NAT for seven weeks. Keep these three lines on every block you add.
 app = "bhatball-turn"
 primary_region = "sjc"
 
 [build]
+
+# Relay port range — must match the fly.toml service blocks below. coturn burns
+# one port per ICE agent allocation, and a single client gathers one allocation
+# PER TURN URL in window.BHATBALL_ICE (currently 4: 3478/443 × udp/tcp), so the
+# old 10-port range capped the relay at ~2 concurrent players. 40 ports ≈ 10.
+[env]
+  MIN_PORT = "50000"
+  MAX_PORT = "50039"
 
 # STUN/TURN signalling port (both transports).
 [[services]]
@@ -16,6 +33,7 @@ primary_region = "sjc"
   [[services.ports]]
     port = 3478
 
+# STUN/TURN signalling, TCP.
 [[services]]
   internal_port = 3478
   protocol = "tcp"
@@ -25,9 +43,9 @@ primary_region = "sjc"
   [[services.ports]]
     port = 3478
 
-# Also serve TURN on 443 (both transports) via coturn's alt-listening-port.
-# Strict school/office firewalls block 3478 but allow 443 (it looks like HTTPS),
-# so this is what makes rooms connect on locked-down Wi-Fi.
+# TURN on 443 (both transports) via coturn's aux-server. Strict school/office
+# firewalls block 3478 but allow 443 (it looks like HTTPS), so this is what makes
+# rooms connect on locked-down wifi.
 [[services]]
   internal_port = 443
   protocol = "udp"
@@ -37,6 +55,7 @@ primary_region = "sjc"
   [[services.ports]]
     port = 443
 
+# TURN on 443, TCP.
 [[services]]
   internal_port = 443
   protocol = "tcp"
@@ -46,59 +65,368 @@ primary_region = "sjc"
   [[services.ports]]
     port = 443
 
-# Relay range 50000-50009/udp — coturn allocates one port per ICE agent, so this
-# supports a handful of concurrent players. Must match MIN_PORT/MAX_PORT in the
-# entrypoint. Fly.toml has no port-range syntax, hence the explicit blocks.
+# Relay range 50000-50039/udp — one port per ICE agent allocation. Must match
+# MIN_PORT/MAX_PORT in [env] above. fly.toml has no port-range syntax, hence the
+# explicit blocks.
 [[services]]
   internal_port = 50000
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50000
+
 [[services]]
   internal_port = 50001
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50001
+
 [[services]]
   internal_port = 50002
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50002
+
 [[services]]
   internal_port = 50003
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50003
+
 [[services]]
   internal_port = 50004
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50004
+
 [[services]]
   internal_port = 50005
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50005
+
 [[services]]
   internal_port = 50006
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50006
+
 [[services]]
   internal_port = 50007
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50007
+
 [[services]]
   internal_port = 50008
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50008
+
 [[services]]
   internal_port = 50009
   protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
   [[services.ports]]
     port = 50009
+
+[[services]]
+  internal_port = 50010
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50010
+
+[[services]]
+  internal_port = 50011
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50011
+
+[[services]]
+  internal_port = 50012
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50012
+
+[[services]]
+  internal_port = 50013
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50013
+
+[[services]]
+  internal_port = 50014
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50014
+
+[[services]]
+  internal_port = 50015
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50015
+
+[[services]]
+  internal_port = 50016
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50016
+
+[[services]]
+  internal_port = 50017
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50017
+
+[[services]]
+  internal_port = 50018
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50018
+
+[[services]]
+  internal_port = 50019
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50019
+
+[[services]]
+  internal_port = 50020
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50020
+
+[[services]]
+  internal_port = 50021
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50021
+
+[[services]]
+  internal_port = 50022
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50022
+
+[[services]]
+  internal_port = 50023
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50023
+
+[[services]]
+  internal_port = 50024
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50024
+
+[[services]]
+  internal_port = 50025
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50025
+
+[[services]]
+  internal_port = 50026
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50026
+
+[[services]]
+  internal_port = 50027
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50027
+
+[[services]]
+  internal_port = 50028
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50028
+
+[[services]]
+  internal_port = 50029
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50029
+
+[[services]]
+  internal_port = 50030
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50030
+
+[[services]]
+  internal_port = 50031
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50031
+
+[[services]]
+  internal_port = 50032
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50032
+
+[[services]]
+  internal_port = 50033
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50033
+
+[[services]]
+  internal_port = 50034
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50034
+
+[[services]]
+  internal_port = 50035
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50035
+
+[[services]]
+  internal_port = 50036
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50036
+
+[[services]]
+  internal_port = 50037
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50037
+
+[[services]]
+  internal_port = 50038
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50038
+
+[[services]]
+  internal_port = 50039
+  protocol = "udp"
+  auto_stop_machines = "off"
+  auto_start_machines = false
+  min_machines_running = 1
+  [[services.ports]]
+    port = 50039
 
 [[vm]]
   size = "shared-cpu-1x"
