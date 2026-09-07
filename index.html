@@ -352,13 +352,17 @@
         <div class="sub">Host a room, share the 4-letter code. Pick how the room connects — both modes play identically.</div>
         <h2>Connection</h2>
         <div class="cardsRow" id="netModeRow">
+          <div class="miniCard" id="modeWIFI">
+            <b><span class="tag" id="wifiTag">Fastest</span>⚡ Same Wi-Fi</b>
+            <span>Browser to browser across the room — no relay in the path, nothing to install, nothing to run. Everyone must be on this Wi-Fi.</span>
+          </div>
           <div class="miniCard" id="modeP2P">
             <b><span class="tag" id="p2pTag">Works anywhere</span>🌍 Anywhere</b>
             <span>Peer-to-peer over the internet, with a relay for locked-down networks. Friends can be on any Wi-Fi, any city.</span>
           </div>
-          <div class="miniCard" id="modeLAN">
-            <b><span class="tag" id="lanTag">Checking…</span>⚡ Same Wi-Fi · direct</b>
-            <span>Straight to this Mac — no signalling cloud, no relay, nothing in the middle. Fastest, but everyone must be on this network.</span>
+          <div class="miniCard hidden" id="modeSRV">
+            <b><span class="tag" id="srvTag">No internet needed</span>🖧 LAN server</b>
+            <span>Routes through the room server running on this Mac. Only option that needs no internet at all — and the only one that needs <b>npm start</b>.</span>
           </div>
         </div>
         <div class="sub" id="modeNote" style="margin-top:8px;font-size:12.5px;"></div>

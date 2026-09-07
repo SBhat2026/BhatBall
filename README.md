@@ -61,32 +61,38 @@ Then open **http://localhost:8000** in your browser. (`python3` is preinstalled 
 ## 🌐 Multiplayer
 
 Click **🌐 Online Room**, pick a **connection mode**, host a room, share the
-4-letter code. Both modes play identically — they differ only in how packets get
-from a joiner to the host.
+4-letter code. All modes play identically — they differ only in how packets get
+from a joiner to the host. **Nothing needs installing for any of them except the
+last one.**
 
-| | 🌍 **Anywhere** (default) | ⚡ **Same Wi‑Fi · direct** |
-|---|---|---|
-| Path | PeerJS signalling + STUN, TURN relay for strict networks | joiner's browser → `server.js` on the host's Mac |
-| Depends on | three external services | nothing outside the room |
-| Typical latency | 30–80ms via the relay | 1–3ms |
-| Needs | any internet | everyone on one network, page served by the host |
-| Use it when | players are on different networks | you're all in the same room and want the lowest latency, or the internet/relay is unavailable |
+| | ⚡ **Same Wi-Fi** (default) | 🌍 **Anywhere** | 🖧 **LAN server** |
+|---|---|---|---|
+| Gameplay path | browser → browser, local candidates only | browser → browser, relay if needed | browser → `server.js` → browser |
+| Needs installing | nothing | nothing | Node, `npm install`, `npm start` |
+| Needs internet | only to trade the 4-letter code | yes | **no — works fully offline** |
+| Typical latency | 1–3ms | 1–3ms same Wi-Fi, 30–80ms relayed | 1–3ms |
+| Everyone must be… | on one Wi-Fi | anywhere | on one Wi-Fi, on the host's page |
 
-**Anywhere** runs over the open internet **independent of how you loaded the
-game** — even a double-clicked offline file can host a room, as long as the
-network lets WebRTC out.
+**⚡ Same Wi-Fi** is the default and needs no setup at all. The room code is
+traded through the signalling cloud (a few hundred bytes), then the data channel
+is pinned to **local candidates only** — no STUN, no TURN — so gameplay is a
+straight hop across the room. Open the game however you like: this page, the
+offline file, a USB copy. If the two of you turn out not to be on one network, no
+candidate pair forms and the joiner **falls back to Anywhere automatically** after
+~7 seconds; the readout then says so. A host always gathers full ICE, so a room
+started in Same Wi-Fi mode is still joinable from anywhere.
 
-**Same Wi‑Fi** is offered only when the page is being served by `server.js`
-(that's what makes the room relay same-origin). Run `npm install && npm start` on
-the host's Mac and open the `LAN: http://192.168.x.x:3080` address it prints;
-everyone else opens the same address on that Wi‑Fi. If you loaded the game from a
-file or a website the option greys out and tells you why. The old `?ws` flag still
-forces it, and `?p2p` forces Anywhere.
+**🌍 Anywhere** runs over the open internet **independent of how you loaded the
+game** — even a double-clicked offline file can host a room.
+
+**🖧 LAN server** is the old `?ws` mode. It's the only one that needs `npm start`
+and the only one that works with the internet completely unplugged (no signalling
+cloud at all). The card appears only when a server is actually running.
 
 Your name, mode choice, and **Copy invite link** (a `?room=CODE` deep link that
-opens the lobby with the code filled in) are all there to save typing. The lobby
-and the in-match pill show the live round trip to the host, so you can see what a
-mode actually costs you.
+opens the lobby with the code filled in) are all remembered to save typing. The
+lobby and the in-match pill show the live round trip to the host, so you can see
+what a mode actually costs you.
 
 - **⚔️ 1v1** — host vs first joiner, full 11v11.
 - **🏆 Knockout Cup** — every human seeded into a golden-goal bracket, CPU nations fill the rest.
@@ -94,11 +100,12 @@ mode actually costs you.
 
 ### If a join hangs (restrictive network) — try in this order
 
-1. **Both on the same Wi‑Fi? Switch to ⚡ Same Wi‑Fi · direct — no internet
-   needed.** On one machine run `npm install && npm start`, then have **everyone**
-   (host included) open the printed `LAN: http://192.168.x.x:3080` address and
-   pick that mode in the Online Room screen. It never touches PeerJS, STUN or
-   TURN. (Needs Node.js on the one host machine.)
+1. **Both on the same Wi‑Fi? ⚡ Same Wi‑Fi mode is already the default** and
+   needs nothing installed — it skips STUN and TURN entirely, so a blocked relay
+   can't stop it. Only the room-code handshake goes out to the internet. If even
+   that is blocked, run `npm install && npm start` on one machine, open the
+   printed `LAN: http://192.168.x.x:3080` address on both, and pick **🖧 LAN
+   server** — that path touches no external service at all.
 2. **Different networks? Add a TURN relay on port 443.** Strict firewalls block
    WebRTC's usual UDP but allow HTTPS (443). Free tier at
    [metered.ca](https://www.metered.ca) gives you TURN over 443 that looks like

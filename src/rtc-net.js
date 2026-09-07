@@ -78,13 +78,28 @@ const iceServers = () => {
     ? window.BHATBALL_ICE : DEFAULT_ICE;
   return _fetchedIce ? [...staticIce, ..._fetchedIce] : staticIce;
 };
-const peerOpts = () => ({ config: { iceServers: iceServers() } });
+// LAN-only: gather NOTHING but host candidates. With no STUN and no TURN the
+// only pairs ICE can form are local-address ↔ local-address, so a connection
+// that opens is provably a straight browser-to-browser hop across the room —
+// no relay, no server, nothing to install. If the two peers aren't on the same
+// network no pair can form, which is exactly the signal main.js uses to fall
+// back to full ICE. (Signalling still goes through the PeerJS cloud: that's a
+// few hundred bytes to trade a room code, not the gameplay path.)
+const peerOpts = (lanOnly) => ({ config: { iceServers: lanOnly ? [] : iceServers() } });
 
 // How long a joiner waits for the data channel to open before giving up.
 const JOIN_TIMEOUT_MS = 20000;
+// LAN-only attempts get a short leash — on one network the handshake is nearly
+// instant, so a slow one means "not on this network", and we want the fallback
+// to start before anyone thinks it's broken.
+const LAN_JOIN_TIMEOUT_MS = 7000;
 
 export class RtcNet {
-  constructor() {
+  // opts.lanOnly — see peerOpts above. Hosts never set it: a host gathers full
+  // ICE so the same room stays joinable both ways, and ICE still prefers the
+  // local pair when the joiner is in the room.
+  constructor({ lanOnly = false } = {}) {
+    this.lanOnly = lanOnly;
     this.peer = null;
     this.conn = null;      // joiner → host, reliable control channel ('evt')
     this.connRt = null;    // joiner → host, unreliable realtime channel ('rt')
@@ -106,6 +121,7 @@ export class RtcNet {
     if (typeof window === 'undefined' || !window.Peer) {
       throw new Error('PeerJS not loaded');
     }
+    if (this.lanOnly) return; // no ICE servers wanted, so nothing to fetch
     await fetchIce(); // best-effort: pull multi-region TURN creds if configured
   }
 
@@ -124,7 +140,7 @@ export class RtcNet {
   create(name, team, _attempt = 0) {
     this._dead = false;
     const code = makeCode();
-    const peer = this.peer = new window.Peer(peerId(code), peerOpts());
+    const peer = this.peer = new window.Peer(peerId(code), peerOpts(this.lanOnly));
 
     peer.on('open', () => {
       this.code = code;
@@ -240,7 +256,7 @@ export class RtcNet {
     this._dead = false;
     const clean = (code || '').toUpperCase().trim();
     const nm = (name || 'Player').slice(0, 14);
-    const peer = this.peer = new window.Peer(undefined, peerOpts());
+    const peer = this.peer = new window.Peer(undefined, peerOpts(this.lanOnly));
 
     // If the data channel never opens (blocked by NAT/firewall with no TURN
     // path), don't hang forever — surface a real error the joiner can act on.
@@ -249,10 +265,13 @@ export class RtcNet {
       if (opened || this._dead) return;
       this._emit('err', {
         t: 'err',
-        msg: 'Could not connect to the host — your network may be blocking it. Try again, or have everyone join from the same Wi-Fi.',
+        code: 'timeout',
+        msg: this.lanOnly
+          ? 'No one answered on this Wi-Fi — the host may be on a different network.'
+          : 'Could not connect to the host — your network may be blocking it. Try again, or have everyone join from the same Wi-Fi.',
       });
       this.close();
-    }, JOIN_TIMEOUT_MS);
+    }, this.lanOnly ? LAN_JOIN_TIMEOUT_MS : JOIN_TIMEOUT_MS);
 
     peer.on('open', () => {
       // Reliable control channel — the handshake + all lobby/scoring events.

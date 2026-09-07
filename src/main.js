@@ -832,32 +832,45 @@ let clientView = null;
 let clientTape = [];        // client-side rolling snapshot tape for replays
 
 // --- online room: connection mode --------------------------------------------
-// Two ways to run a room, both playing identically — the difference is only how
+// Three ways to run a room, all playing identically — the difference is only how
 // packets get from a joiner to the host:
-//   'p2p' — PeerJS signalling cloud + STUN, with our TURN relay for locked-down
-//           networks. Works between ANY two networks; three external services in
-//           the path, so it inherits their outages.
-//   'lan' — the WebSocket relay in server.js, same origin as this page. Nothing
-//           external at all and ~1-3ms on a local network, but everyone has to
-//           be on the host's Wi-Fi AND load the page from the host's server
-//           (that's what makes the relay same-origin). Probing /lan-info is how
-//           we know that's true; a static or offline copy of the game 404s it.
-const MODE_KEY = 'bhatball.netMode';
+//   'wifi'   — DEFAULT. PeerJS trades the room code, then the data channel is
+//              pinned to local candidates only (no STUN, no TURN), so gameplay
+//              is a straight browser-to-browser hop across the room. Nothing to
+//              install and nothing to run: this is the fast local path WITHOUT
+//              npm. If the two aren't on one network no candidate pair forms and
+//              we fall back to 'p2p' automatically.
+//   'p2p'    — full ICE: STUN, plus our TURN relay for locked-down networks.
+//              Works between ANY two networks.
+//   'server' — the WebSocket relay in server.js (the old ?ws mode). The only one
+//              that needs NO internet whatsoever, and the only one that needs
+//              npm start. Offered solely when /lan-info proves it's there.
+const MODE_KEY = 'bhatball.netMode2'; // v2: 'lan' used to mean the server mode
 const NAME_KEY = 'bhatball.playerName';
 const QS = new URLSearchParams(location.search);
-// ?ws / ?p2p still force a mode (old links and invite links keep working).
-// Otherwise: whatever you picked last time, and failing that Direct — it's the
-// faster, dependency-free path, so it's the default WHENEVER it's available.
-// The probe below decides that; until it answers we sit on Anywhere, which
-// always works.
+// ?ws / ?p2p / ?wifi force a mode (old links keep working). Otherwise: whatever
+// you picked last time, else Same Wi-Fi — the fast path costs nothing to try and
+// degrades to Anywhere on its own.
 const storedMode = localStorage.getItem(MODE_KEY);
-let netMode = QS.has('ws') ? 'lan' : QS.has('p2p') ? 'p2p' : (storedMode || 'p2p');
+const forcedMode = QS.has('ws') ? 'server' : QS.has('p2p') ? 'p2p' : QS.has('wifi') ? 'wifi' : null;
+let netMode = forcedMode || storedMode || 'wifi';
+let usingFallback = false; // this joiner asked for Wi-Fi and ended up on Anywhere
+// While a join is in flight the status line reports progress instead of
+// readiness — otherwise any later re-render (a probe resolving, a mode click)
+// would wipe "Looking for the room…" mid-attempt.
+let joinPhase = null;
 let lanInfo = null;      // { port, urls: [...] } once /lan-info answers
 let lanProbed = false;   // probe started
-let lanProbeDone = false;// probe finished — only then is "no Direct" a fact
-let lastRtt = null;    // client-side round trip to the host, ms
+let lanProbeDone = false;// probe finished — only then is "no server mode" a fact
+let lastRtt = null;      // client-side round trip to the host, ms
 let pingTimer = null;
 let statTimer = null;
+
+const MODE_UI = {
+  wifi: { card: 'modeWIFI', label: '⚡ Same Wi-Fi' },
+  p2p: { card: 'modeP2P', label: '🌍 Anywhere' },
+  server: { card: 'modeSRV', label: '🖧 LAN server' },
+};
 
 async function probeLan() {
   if (lanProbed) return lanInfo;
@@ -868,16 +881,15 @@ async function probeLan() {
     const r = await fetch('lan-info', { signal: ctl.signal, cache: 'no-store' });
     clearTimeout(t);
     if (r.ok) lanInfo = await r.json();
-  } catch { lanInfo = null; } // file://, a static host, or the server is down
+  } catch { lanInfo = null; } // file://, a static host, or the server isn't running
   lanProbeDone = true;
-  // No explicit preference yet? Take the fast path now that we know it exists.
-  if (lanInfo && !storedMode && !QS.has('p2p')) netMode = 'lan';
   return lanInfo;
 }
 
 function setNetMode(m) {
-  if (m === 'lan' && lanProbeDone && !lanInfo) return; // can't pick what isn't reachable
+  if (m === 'server' && !lanInfo) return; // can't pick what isn't running
   netMode = m;
+  usingFallback = false;
   localStorage.setItem(MODE_KEY, m);
   renderNetMode();
 }
@@ -886,40 +898,44 @@ function renderLobbyStatus() {
   const row = $('lobbyStatus');
   const txt = $('lobbyStatusText');
   const btns = [$('btnHost'), $('btnJoin')];
-  const ready = lanProbeDone && (netMode === 'lan' ? !!lanInfo : !!window.Peer);
+  if (joinPhase) {
+    row.classList.remove('ready', 'bad');
+    txt.textContent = joinPhase;
+    for (const b of btns) { b.disabled = true; b.classList.add('dim'); }
+    return;
+  }
+  // Wi-Fi and Anywhere only need the PeerJS script, which ships with the page —
+  // so the room is hostable immediately, with no probe to wait for.
+  const ready = netMode === 'server' ? !!lanInfo : !!window.Peer;
   row.classList.toggle('ready', ready);
-  row.classList.toggle('bad', lanProbeDone && !ready);
+  row.classList.toggle('bad', !ready);
   for (const b of btns) { b.disabled = !ready; b.classList.toggle('dim', !ready); }
-  if (!lanProbeDone) txt.textContent = 'Checking your network…';
-  else if (ready && netMode === 'lan') txt.textContent = `Ready — Direct room on ${lanInfo.urls[0] || 'this Mac'}`;
+  if (ready && netMode === 'wifi') txt.textContent = 'Ready — host a room, no setup needed';
+  else if (ready && netMode === 'server') txt.textContent = `Ready — LAN server on ${lanInfo.urls[0] || 'this Mac'}`;
   else if (ready) txt.textContent = 'Ready — room over the internet';
-  else txt.textContent = 'Not ready — the room network could not be reached. Reload, or check your connection.';
+  else if (netMode === 'server') txt.textContent = 'Not ready — the LAN server stopped. Run npm start, or pick another mode.';
+  else txt.textContent = 'Not ready — the room code service could not load. Reload the page.';
 }
 
 function renderNetMode() {
-  // Only demote a Direct pick once the probe has actually answered — otherwise
-  // a ?ws invite link would get downgraded in the split second before it lands.
-  if (netMode === 'lan' && lanProbeDone && !lanInfo) netMode = 'p2p';
-  $('modeP2P').classList.toggle('sel', netMode === 'p2p');
-  $('modeLAN').classList.toggle('sel', netMode === 'lan');
-  const lanCard = $('modeLAN');
-  const lanOut = lanProbeDone && !lanInfo;
-  lanCard.style.opacity = lanOut ? '.5' : '';
-  lanCard.style.cursor = lanOut ? 'default' : '';
+  if (netMode === 'server' && lanProbeDone && !lanInfo) netMode = 'wifi';
+  for (const [mode, ui] of Object.entries(MODE_UI)) $(ui.card).classList.toggle('sel', netMode === mode);
+  // The server card only exists when something is actually listening.
+  $('modeSRV').classList.toggle('hidden', !lanInfo);
+  $('srvTag').textContent = 'No internet needed';
+  $('wifiTag').textContent = netMode === 'wifi' ? 'Fastest · ready' : 'Fastest';
   const note = $('modeNote');
-  if (lanOut) {
-    note.innerHTML = '<b>Same Wi-Fi</b> needs this page served by the room server on the host\'s Mac: run <b>npm start</b> in the BhatBall folder and open the address it prints. Opened from a file or a website, only <b>Anywhere</b> can work.';
-  } else if (netMode === 'lan') {
-    note.innerHTML = `Joiners open <b>${lanInfo?.urls?.[0] || location.origin}</b> on this Wi-Fi and type the code. No signalling cloud, no relay — if the internet drops, the room keeps playing.`;
+  if (netMode === 'wifi') {
+    note.innerHTML = 'Everyone opens the game <b>however they like</b> — this page, a shared file, anything — and types the code. No install, no server, no relay: gameplay goes straight across the Wi-Fi. Not on the same network? It switches to Anywhere by itself.';
+  } else if (netMode === 'server') {
+    note.innerHTML = `Joiners open <b>${lanInfo?.urls?.[0] || location.origin}</b> and type the code. Works with the internet completely unplugged — but this Mac has to keep <b>npm start</b> running.`;
   } else {
     note.textContent = 'Joiners can be on any network — they only need the code. Falls back to the TURN relay on strict Wi-Fi.';
   }
-  $('lanTag').textContent = !lanProbeDone ? 'Checking…' : lanInfo ? 'Fastest · ready' : 'Needs npm start';
   renderLobbyStatus();
 }
 
-$('modeP2P').onclick = () => setNetMode('p2p');
-$('modeLAN').onclick = () => setNetMode('lan');
+for (const [mode, ui] of Object.entries(MODE_UI)) $(ui.card).onclick = () => setNetMode(mode);
 
 function openLobby() {
   $('menu').classList.add('hidden');
@@ -929,7 +945,7 @@ function openLobby() {
   $('lanError').textContent = '';
   $('lanName').value = $('lanName').value || localStorage.getItem(NAME_KEY) || '';
   renderNetMode();
-  probeLan().then(renderNetMode); // re-render once we know if Direct is possible
+  probeLan().then(renderNetMode); // the server card appears if one is running
 }
 
 $('btnLAN').onclick = openLobby;
@@ -980,10 +996,11 @@ function flashCopy(btn, label, ok) {
 }
 
 function inviteLink() {
-  const base = (netMode === 'lan' && lanInfo?.urls?.length) ? lanInfo.urls[0] : location.href;
+  const base = (netMode === 'server' && lanInfo?.urls?.length) ? lanInfo.urls[0] : location.href;
   const u = new URL(base, location.href);
   u.search = ''; u.hash = '';
-  if (netMode === 'lan') u.searchParams.set('ws', '');
+  if (netMode === 'server') u.searchParams.set('ws', '');
+  else if (netMode === 'wifi') u.searchParams.set('wifi', '');
   u.searchParams.set('room', $('roomCode').textContent.trim());
   return u.toString();
 }
@@ -997,7 +1014,7 @@ $('btnCopyLink').onclick = async (e) =>
 function rttClass(ms) { return ms == null ? '' : ms < 60 ? '' : ms < 140 ? 'mid' : 'bad'; }
 
 function renderNetStat() {
-  const label = netMode === 'lan' ? '⚡ Direct' : '🌍 Anywhere';
+  const label = usingFallback ? '🌍 Anywhere (Wi-Fi had no path)' : MODE_UI[netMode].label;
   const where = netRole === 'host'
     ? `hosting · ${roster.length} in room`
     : lastRtt == null ? 'measuring…' : `${Math.round(lastRtt)}ms`;
@@ -1031,8 +1048,8 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   [...$('lanTeams').children].forEach((el, j) => el.classList.toggle('sel', j === i));
 });
 
-const noRoomMsg = () => netMode === 'lan'
-  ? 'The room server on this Mac isn\'t answering — restart it with npm start, then try again. (Or switch to Anywhere.)'
+const noRoomMsg = () => netMode === 'server'
+  ? 'The LAN server on this Mac isn\'t answering — restart it with npm start, then try again. (Or switch to Same Wi-Fi, which needs no server.)'
   : 'Could not start a room — check your internet connection and try again.';
 
 // --- custom face upload ------------------------------------------------------
@@ -1404,13 +1421,14 @@ function attemptReconnect() {
   }, 700 * reconnectTries);
 }
 
-async function connectNet() {
-  // Direct mode is the ws relay in server.js; Anywhere is PeerJS + STUN/TURN.
-  // Same handler names and message shapes either way, so nothing downstream of
-  // here knows or cares which one it got.
-  net = netMode === 'lan' ? new Net() : new RtcNet();
+async function connectNet({ lanOnly = false } = {}) {
+  // 'server' is the ws relay in server.js; everything else is WebRTC. lanOnly
+  // pins that WebRTC connection to local candidates (Same Wi-Fi mode). Same
+  // handler names and message shapes either way, so nothing downstream of here
+  // knows or cares which one it got.
+  net = netMode === 'server' ? new Net() : new RtcNet({ lanOnly });
   await net.connect();
-  net.on('err', (m) => { $('lanError').textContent = m.msg; });
+  net.on('err', (m) => { joinPhase = null; $('lanError').textContent = m.msg; renderLobbyStatus(); });
   net.on('roster', (m) => { roster = m.roster; renderRoster(); renderNetStat(); });
   net.on('close', () => {
     if (!netRole) return;
@@ -1422,6 +1440,11 @@ async function connectNet() {
 
 $('btnHost').onclick = async () => {
   audio.init();
+  usingFallback = false;
+  // A HOST always gathers full ICE, even in Same Wi-Fi mode: it costs nothing
+  // (ICE still picks the local pair for someone in the room) and it means a
+  // joiner whose local attempt fails can fall back and still get in, instead of
+  // hitting a host that can only ever talk to its own subnet.
   try { await connectNet(); } catch { $('lanError').textContent = noRoomMsg(); return; }
   netRole = 'host';
   net.on('created', (m) => {
@@ -1430,11 +1453,15 @@ $('btnHost').onclick = async () => {
     $('lobbyRoom').classList.remove('hidden');
     $('hostControls').classList.remove('hidden');
     $('clientWait').classList.add('hidden');
-    if (netMode === 'lan') {
-      $('lanInvite').classList.remove('hidden');
-      $('lanInvite').innerHTML = `⚡ <b>Direct room.</b> Everyone on this Wi-Fi opens <b>${lanInfo?.urls?.[0] || location.origin}</b> and types <b>${m.code}</b>. Keep this tab open — this Mac is the server.`;
+    const invite = $('lanInvite');
+    if (netMode === 'server') {
+      invite.classList.remove('hidden');
+      invite.innerHTML = `🖧 <b>LAN server room.</b> Everyone on this Wi-Fi opens <b>${lanInfo?.urls?.[0] || location.origin}</b> and types <b>${m.code}</b>. Keep this tab AND npm start running — this Mac is the server.`;
+    } else if (netMode === 'wifi') {
+      invite.classList.remove('hidden');
+      invite.innerHTML = `⚡ <b>Same Wi-Fi room.</b> Anyone on this Wi-Fi opens the game and types <b>${m.code}</b> — nothing to install. Someone on another network can still join; they'll come in over the internet instead.`;
     } else {
-      $('lanInvite').classList.add('hidden');
+      invite.classList.add('hidden');
     }
     startNetStat();
   });
@@ -1478,12 +1505,27 @@ $('btnHost').onclick = async () => {
   net.create($('lanName').value || 'Host', null);
 };
 
-$('btnJoin').onclick = async () => {
-  audio.init();
-  try { await connectNet(); } catch { $('lanError').textContent = noRoomMsg(); return; }
+// One join attempt. Same Wi-Fi runs this twice at most: once pinned to the local
+// network, then — only if no candidate pair formed — once over full ICE. The
+// retry is automatic because "are we on the same Wi-Fi?" is a question the game
+// can answer for itself in a couple of seconds, and shouldn't ask the player.
+async function startJoin({ lanOnly }) {
+  try { await connectNet({ lanOnly }); } catch { $('lanError').textContent = noRoomMsg(); return; }
   netRole = 'client';
+  if (lanOnly) {
+    net.on('err', (m) => {
+      if (m.code !== 'timeout') { joinPhase = null; $('lanError').textContent = m.msg; renderLobbyStatus(); return; }
+      // No local path — the host isn't on this Wi-Fi. Go over the internet.
+      usingFallback = true;
+      $('lanError').textContent = '';
+      joinPhase = 'Not on the same Wi-Fi — connecting over the internet…';
+      renderLobbyStatus();
+      startJoin({ lanOnly: false });
+    });
+  }
   net.on('joined', (m) => {
     myId = m.id;
+    joinPhase = null; // in the room — back to reporting readiness
     reconnectTries = 0; // a clean handshake resets the reconnect budget
     $('roomCode').textContent = m.code;
     $('lobbyChoice').classList.add('hidden');
@@ -1497,12 +1539,21 @@ $('btnJoin').onclick = async () => {
     pingTimer = setInterval(() => net?.sendPing?.(performance.now()), 2000);
     net.sendPing(performance.now());
     startNetStat();
+    renderLobbyStatus();
   });
   net.on('cast', (m) => handleCast(m.d));
   lastJoinCode = $('lanCode').value;
   lastJoinName = $('lanName').value || 'Player';
   localStorage.setItem(NAME_KEY, $('lanName').value.trim());
   net.join(lastJoinCode, lastJoinName);
+}
+
+$('btnJoin').onclick = () => {
+  audio.init();
+  usingFallback = false;
+  joinPhase = netMode === 'wifi' ? 'Looking for the room on this Wi-Fi…' : 'Connecting…';
+  renderLobbyStatus();
+  startJoin({ lanOnly: netMode === 'wifi' });
 };
 
 function renderRoster() {
