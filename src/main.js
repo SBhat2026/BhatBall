@@ -831,15 +831,176 @@ let clientSide = null;      // 'A' | 'B' | null
 let clientView = null;
 let clientTape = [];        // client-side rolling snapshot tape for replays
 
-$('btnLAN').onclick = () => {
+// --- online room: connection mode --------------------------------------------
+// Two ways to run a room, both playing identically — the difference is only how
+// packets get from a joiner to the host:
+//   'p2p' — PeerJS signalling cloud + STUN, with our TURN relay for locked-down
+//           networks. Works between ANY two networks; three external services in
+//           the path, so it inherits their outages.
+//   'lan' — the WebSocket relay in server.js, same origin as this page. Nothing
+//           external at all and ~1-3ms on a local network, but everyone has to
+//           be on the host's Wi-Fi AND load the page from the host's server
+//           (that's what makes the relay same-origin). Probing /lan-info is how
+//           we know that's true; a static or offline copy of the game 404s it.
+const MODE_KEY = 'bhatball.netMode';
+const NAME_KEY = 'bhatball.playerName';
+const QS = new URLSearchParams(location.search);
+// ?ws / ?p2p still force a mode (old links and invite links keep working).
+let netMode = QS.has('ws') ? 'lan' : QS.has('p2p') ? 'p2p' : (localStorage.getItem(MODE_KEY) || 'p2p');
+let lanInfo = null;      // { port, urls: [...] } once /lan-info answers
+let lanProbed = false;   // probe started
+let lanProbeDone = false;// probe finished — only then is "no Direct" a fact
+let lastRtt = null;    // client-side round trip to the host, ms
+let pingTimer = null;
+let statTimer = null;
+
+async function probeLan() {
+  if (lanProbed) return lanInfo;
+  lanProbed = true;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 1500);
+    const r = await fetch('lan-info', { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(t);
+    if (r.ok) lanInfo = await r.json();
+  } catch { lanInfo = null; } // file://, a static host, or the server is down
+  lanProbeDone = true;
+  return lanInfo;
+}
+
+function setNetMode(m) {
+  if (m === 'lan' && lanProbeDone && !lanInfo) return; // can't pick what isn't reachable
+  netMode = m;
+  localStorage.setItem(MODE_KEY, m);
+  renderNetMode();
+}
+
+function renderNetMode() {
+  // Only demote a Direct pick once the probe has actually answered — otherwise
+  // a ?ws invite link would get downgraded in the split second before it lands.
+  if (netMode === 'lan' && lanProbeDone && !lanInfo) netMode = 'p2p';
+  $('modeP2P').classList.toggle('sel', netMode === 'p2p');
+  $('modeLAN').classList.toggle('sel', netMode === 'lan');
+  const lanCard = $('modeLAN');
+  const lanOut = lanProbeDone && !lanInfo;
+  lanCard.style.opacity = lanOut ? '.5' : '';
+  lanCard.style.cursor = lanOut ? 'default' : '';
+  const note = $('modeNote');
+  if (lanOut) {
+    note.innerHTML = '<b>Same Wi-Fi</b> needs this page served by the room server on the host\'s Mac: run <b>npm start</b> in the BhatBall folder and open the address it prints. Opened from a file or a website, only <b>Anywhere</b> can work.';
+  } else if (netMode === 'lan') {
+    note.innerHTML = `Joiners open <b>${lanInfo?.urls?.[0] || location.origin}</b> on this Wi-Fi and type the code. No signalling cloud, no relay — if the internet drops, the room keeps playing.`;
+  } else {
+    note.textContent = 'Joiners can be on any network — they only need the code. Falls back to the TURN relay on strict Wi-Fi.';
+  }
+}
+
+$('modeP2P').onclick = () => setNetMode('p2p');
+$('modeLAN').onclick = () => setNetMode('lan');
+
+function openLobby() {
   $('menu').classList.add('hidden');
   $('lobby').classList.remove('hidden');
   $('lobbyChoice').classList.remove('hidden');
   $('lobbyRoom').classList.add('hidden');
   $('lanError').textContent = '';
-};
-$('btnLobbyBack').onclick = () => { net?.close?.(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
-$('btnLeaveRoom').onclick = () => { net?.close?.(); net = null; $('lobby').classList.add('hidden'); toMenu(); };
+  $('lanName').value = $('lanName').value || localStorage.getItem(NAME_KEY) || '';
+  renderNetMode();
+  probeLan().then(renderNetMode); // re-render once we know if Direct is possible
+}
+
+$('btnLAN').onclick = openLobby;
+
+// Invite deep link: ?room=ABCD (plus ?ws for a Direct room) drops straight into
+// the lobby with the code filled in, so a shared link is one click + Join.
+if (QS.get('room')) {
+  $('lanCode').value = QS.get('room').toUpperCase().slice(0, 4);
+  openLobby();
+}
+
+// --- room code + name quality of life ----------------------------------------
+$('lanCode').addEventListener('input', (e) => {
+  // codes are 4 letters — paste a whole invite link or type lowercase and it
+  // still lands correctly instead of failing with "Room not found".
+  const m = e.target.value.toUpperCase().match(/[A-Z]/g) || [];
+  e.target.value = m.join('').slice(0, 4);
+});
+$('lanCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
+$('lanName').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  ($('lanCode').value.length === 4 ? $('btnJoin') : $('btnHost')).click();
+});
+
+async function copyToClipboard(text) {
+  // navigator.clipboard is unavailable on plain http:// origins — which is
+  // exactly where Direct mode lives (http://192.168.x.x) — so keep the old
+  // execCommand path as a real fallback, not an afterthought.
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+function flashCopy(btn, label, ok) {
+  btn.textContent = ok ? 'Copied ✓' : 'Press ⌘C';
+  setTimeout(() => { btn.textContent = label; }, 1500);
+}
+
+function inviteLink() {
+  const base = (netMode === 'lan' && lanInfo?.urls?.length) ? lanInfo.urls[0] : location.href;
+  const u = new URL(base, location.href);
+  u.search = ''; u.hash = '';
+  if (netMode === 'lan') u.searchParams.set('ws', '');
+  u.searchParams.set('room', $('roomCode').textContent.trim());
+  return u.toString();
+}
+
+$('btnCopyCode').onclick = async (e) =>
+  flashCopy(e.target, 'Copy code', await copyToClipboard($('roomCode').textContent.trim()));
+$('btnCopyLink').onclick = async (e) =>
+  flashCopy(e.target, 'Copy invite link', await copyToClipboard(inviteLink()));
+
+// --- live connection readout --------------------------------------------------
+function rttClass(ms) { return ms == null ? '' : ms < 60 ? '' : ms < 140 ? 'mid' : 'bad'; }
+
+function renderNetStat() {
+  const label = netMode === 'lan' ? '⚡ Direct' : '🌍 Anywhere';
+  const where = netRole === 'host'
+    ? `hosting · ${roster.length} in room`
+    : lastRtt == null ? 'measuring…' : `${Math.round(lastRtt)}ms`;
+  $('netStat').textContent = netRole ? `${label} · ${where}` : '';
+  $('netStat').style.color = netRole === 'client' && lastRtt != null && lastRtt >= 140 ? '#d98a8a' : '#9aa2b1';
+  const pill = $('netPill');
+  if (!netRole || !game) { pill.classList.add('hidden'); return; }
+  pill.classList.remove('hidden');
+  pill.innerHTML = `<span class="dot ${rttClass(lastRtt)}"></span>${label} · ${where}`;
+}
+
+function startNetStat() {
+  clearInterval(statTimer);
+  statTimer = setInterval(renderNetStat, 1000);
+  renderNetStat();
+}
+
+function stopNetChatter() {
+  clearInterval(pingTimer); pingTimer = null;
+  clearInterval(statTimer); statTimer = null;
+  lastRtt = null;
+  $('netPill').classList.add('hidden');
+  $('netStat').textContent = '';
+}
+$('btnLobbyBack').onclick = () => { stopNetChatter(); net?.close?.(); net = null; netRole = null; $('lobby').classList.add('hidden'); toMenu(); };
+$('btnLeaveRoom').onclick = () => { stopNetChatter(); net?.close?.(); net = null; netRole = null; $('lobby').classList.add('hidden'); toMenu(); };
 
 buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   myTeamPick = i;
@@ -847,7 +1008,9 @@ buildChips($('lanTeams'), TEAMS, chipHTML, (t, i) => {
   [...$('lanTeams').children].forEach((el, j) => el.classList.toggle('sel', j === i));
 });
 
-const NO_SERVER_MSG = 'Could not start a room — check your internet connection and try again.';
+const noRoomMsg = () => netMode === 'lan'
+  ? 'The room server on this Mac isn\'t answering — restart it with npm start, then try again. (Or switch to Anywhere.)'
+  : 'Could not start a room — check your internet connection and try again.';
 
 // --- custom face upload ------------------------------------------------------
 function drawAvatarPreview(dataURL) {
@@ -1206,7 +1369,8 @@ function applyAvatars(match) {
 // resumes as a spectator (seat isn't reclaimed — that needs a session token).
 function attemptReconnect() {
   if (netRole !== 'client' || reconnectTries >= 3) {
-    reconnectTries = 0; showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null; return;
+    reconnectTries = 0; stopNetChatter();
+    showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null; return;
   }
   reconnectTries++;
   showBanner(`RECONNECTING… (${reconnectTries}/3)`, 2200);
@@ -1218,20 +1382,24 @@ function attemptReconnect() {
 }
 
 async function connectNet() {
-  net = new URLSearchParams(location.search).has('ws') ? new Net() : new RtcNet();
+  // Direct mode is the ws relay in server.js; Anywhere is PeerJS + STUN/TURN.
+  // Same handler names and message shapes either way, so nothing downstream of
+  // here knows or cares which one it got.
+  net = netMode === 'lan' ? new Net() : new RtcNet();
   await net.connect();
   net.on('err', (m) => { $('lanError').textContent = m.msg; });
-  net.on('roster', (m) => { roster = m.roster; renderRoster(); });
+  net.on('roster', (m) => { roster = m.roster; renderRoster(); renderNetStat(); });
   net.on('close', () => {
     if (!netRole) return;
     if (netRole === 'client' && game?.kind === 'client') { attemptReconnect(); return; }
+    stopNetChatter();
     showBanner('CONNECTION LOST', 2500); toMenu(); netRole = null;
   });
 }
 
 $('btnHost').onclick = async () => {
   audio.init();
-  try { await connectNet(); } catch { $('lanError').textContent = NO_SERVER_MSG; return; }
+  try { await connectNet(); } catch { $('lanError').textContent = noRoomMsg(); return; }
   netRole = 'host';
   net.on('created', (m) => {
     $('roomCode').textContent = m.code;
@@ -1239,7 +1407,16 @@ $('btnHost').onclick = async () => {
     $('lobbyRoom').classList.remove('hidden');
     $('hostControls').classList.remove('hidden');
     $('clientWait').classList.add('hidden');
+    if (netMode === 'lan') {
+      $('lanInvite').classList.remove('hidden');
+      $('lanInvite').innerHTML = `⚡ <b>Direct room.</b> Everyone on this Wi-Fi opens <b>${lanInfo?.urls?.[0] || location.origin}</b> and types <b>${m.code}</b>. Keep this tab open — this Mac is the server.`;
+    } else {
+      $('lanInvite').classList.add('hidden');
+    }
+    startNetStat();
   });
+  // joiners measure their round trip against us; echo the timestamp straight back
+  net.on('ping', ({ from, ts }) => net.to(from, { k: 'pong', ts }));
   net.on('input', (m) => {
     let ri = remoteInputs.get(m.from);
     if (!ri) { ri = new RemoteInput(); remoteInputs.set(m.from, ri); }
@@ -1274,12 +1451,13 @@ $('btnHost').onclick = async () => {
   });
   if (myAvatar) avatars.set(0, myAvatar); // host's own face
   if (myCustomDef) customDefs.set(0, myCustomDef); // host's own XI
+  localStorage.setItem(NAME_KEY, $('lanName').value.trim());
   net.create($('lanName').value || 'Host', null);
 };
 
 $('btnJoin').onclick = async () => {
   audio.init();
-  try { await connectNet(); } catch { $('lanError').textContent = NO_SERVER_MSG; return; }
+  try { await connectNet(); } catch { $('lanError').textContent = noRoomMsg(); return; }
   netRole = 'client';
   net.on('joined', (m) => {
     myId = m.id;
@@ -1291,10 +1469,16 @@ $('btnJoin').onclick = async () => {
     $('clientWait').classList.remove('hidden');
     if (myAvatar) net.sendAvatar(myAvatar); // register my face with the host
     if (myCustomDef) net.sendCustom(myCustomDef); // register my custom XI
+    $('lanInvite').classList.add('hidden');
+    clearInterval(pingTimer);
+    pingTimer = setInterval(() => net?.sendPing?.(performance.now()), 2000);
+    net.sendPing(performance.now());
+    startNetStat();
   });
   net.on('cast', (m) => handleCast(m.d));
   lastJoinCode = $('lanCode').value;
   lastJoinName = $('lanName').value || 'Player';
+  localStorage.setItem(NAME_KEY, $('lanName').value.trim());
   net.join(lastJoinCode, lastJoinName);
 };
 
@@ -1570,6 +1754,10 @@ function handleCast(d) {
         clientTape.push({ ps: d.p, b: d.b });
         if (clientTape.length > 240) clientTape.shift();
       }
+      break;
+    case 'pong':
+      lastRtt = performance.now() - d.ts;
+      renderNetStat();
       break;
     case 'banner': showBanner(d.text, d.ms); break;
     case 'goal':

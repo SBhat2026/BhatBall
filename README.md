@@ -60,14 +60,33 @@ Then open **http://localhost:8000** in your browser. (`python3` is preinstalled 
 
 ## 🌐 Multiplayer
 
-Click **🌐 Online Room** — no server needed. Rooms connect **peer-to-peer over
-WebRTC**: the host gets a 4-letter code, friends type it in from anywhere.
+Click **🌐 Online Room**, pick a **connection mode**, host a room, share the
+4-letter code. Both modes play identically — they differ only in how packets get
+from a joiner to the host.
 
-**Key point:** the multiplayer connection runs over the open internet (WebRTC),
-**independent of how you loaded the game**. So even if you're playing from a
-double-clicked offline file (because `github.io` is blocked), Online Rooms still
-work — as long as your network lets WebRTC out. Load the game any way that works
-for you, then just use Online Rooms.
+| | 🌍 **Anywhere** (default) | ⚡ **Same Wi‑Fi · direct** |
+|---|---|---|
+| Path | PeerJS signalling + STUN, TURN relay for strict networks | joiner's browser → `server.js` on the host's Mac |
+| Depends on | three external services | nothing outside the room |
+| Typical latency | 30–80ms via the relay | 1–3ms |
+| Needs | any internet | everyone on one network, page served by the host |
+| Use it when | players are on different networks | you're all in the same room and want the lowest latency, or the internet/relay is unavailable |
+
+**Anywhere** runs over the open internet **independent of how you loaded the
+game** — even a double-clicked offline file can host a room, as long as the
+network lets WebRTC out.
+
+**Same Wi‑Fi** is offered only when the page is being served by `server.js`
+(that's what makes the room relay same-origin). Run `npm install && npm start` on
+the host's Mac and open the `LAN: http://192.168.x.x:3080` address it prints;
+everyone else opens the same address on that Wi‑Fi. If you loaded the game from a
+file or a website the option greys out and tells you why. The old `?ws` flag still
+forces it, and `?p2p` forces Anywhere.
+
+Your name, mode choice, and **Copy invite link** (a `?room=CODE` deep link that
+opens the lobby with the code filled in) are all there to save typing. The lobby
+and the in-match pill show the live round trip to the host, so you can see what a
+mode actually costs you.
 
 - **⚔️ 1v1** — host vs first joiner, full 11v11.
 - **🏆 Knockout Cup** — every human seeded into a golden-goal bracket, CPU nations fill the rest.
@@ -75,11 +94,11 @@ for you, then just use Online Rooms.
 
 ### If a join hangs (restrictive network) — try in this order
 
-1. **Both on the same Wi‑Fi? Use LAN mode — no internet needed.** On one machine
-   run `npm install && npm start`, note the printed `LAN: http://192.168.x.x:3080`
-   line, and have **everyone** (host included) open that address with **`?ws`**
-   added — e.g. `http://192.168.x.x:3080/?ws`. This never touches the internet,
-   PeerJS, or STUN/TURN. (Needs Node.js on the one host machine.)
+1. **Both on the same Wi‑Fi? Switch to ⚡ Same Wi‑Fi · direct — no internet
+   needed.** On one machine run `npm install && npm start`, then have **everyone**
+   (host included) open the printed `LAN: http://192.168.x.x:3080` address and
+   pick that mode in the Online Room screen. It never touches PeerJS, STUN or
+   TURN. (Needs Node.js on the one host machine.)
 2. **Different networks? Add a TURN relay on port 443.** Strict firewalls block
    WebRTC's usual UDP but allow HTTPS (443). Free tier at
    [metered.ca](https://www.metered.ca) gives you TURN over 443 that looks like
@@ -91,6 +110,10 @@ for you, then just use Online Rooms.
 
 STUN (built in) already covers most home networks; you only need the above when a
 network actively blocks WebRTC.
+
+**Rooms that used to work suddenly hang?** Check the TURN relay before anything
+else — `node tools/turn/check.mjs` (see `tools/turn/fly/README.md`). A stopped
+relay is invisible from inside the game.
 
 ## License
 

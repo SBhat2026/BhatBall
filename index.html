@@ -111,6 +111,15 @@
     position: absolute; bottom: 22px; left: 22px; font-size: 12px; color: #ffffffee;
     background: #4a4f5c88; backdrop-filter: blur(4px); padding: 8px 14px; border-radius: 10px;
   }
+  /* online-room connection readout: mode + live round-trip time */
+  #netPill {
+    position: absolute; bottom: 58px; left: 22px; font-size: 11px; font-weight: 700;
+    letter-spacing: .5px; color: #ffffffee; background: #4a4f5c88; backdrop-filter: blur(4px);
+    padding: 6px 12px; border-radius: 10px;
+  }
+  #netPill .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; background: #a8d5b8; }
+  #netPill .dot.mid { background: #f0c890; }
+  #netPill .dot.bad { background: #e8a5a5; }
   #helpPanel {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
     background: #ffffffee; backdrop-filter: blur(8px); border-radius: 18px; padding: 24px 30px;
@@ -207,7 +216,8 @@
     <div id="powerwrap"><div id="powerbar"></div></div>
     <div id="stamwrap" class="hidden"><div id="stambar"></div></div>
     <canvas id="minimap" width="220" height="150"></canvas>
-    <div id="hint">WASD move · Shift sprint · mouse aims · Space shoot · J pass · L lob · I finesse · B header · Tab switch · H = all controls</div>
+    <div id="netPill" class="hidden"></div>
+  <div id="hint">WASD move · Shift sprint · mouse aims · Space shoot · J pass · L lob · I finesse · B header · Tab switch · H = all controls</div>
     <div id="playerChip" style="position:absolute;bottom:64px;left:22px;font-size:13px;font-weight:800;color:#fff;background:#4a4f5caa;backdrop-filter:blur(4px);padding:6px 12px;border-radius:10px;"></div>
     <div id="helpPanel" class="hidden">
       <h3>Controls</h3>
@@ -323,8 +333,19 @@
     <div class="card" style="max-width:640px;">
       <h1 style="font-size:26px;">🌐 Online Room</h1>
       <div id="lobbyChoice">
-        <div class="sub">Rooms connect peer-to-peer — host one and share the 4-letter code with friends anywhere. Works no matter how you opened this page.</div>
-        <div class="sub" style="margin-top:4px;color:#9aa2b1;font-size:12px;">Join hangs on a strict network? Same Wi-Fi → run the LAN server and add <b>?ws</b> to the address. Different networks → a TURN relay on port 443 (see README).</div>
+        <div class="sub">Host a room, share the 4-letter code. Pick how the room connects — both modes play identically.</div>
+        <h2>Connection</h2>
+        <div class="cardsRow" id="netModeRow">
+          <div class="miniCard sel" id="modeP2P">
+            <b>🌍 Anywhere</b>
+            <span>Peer-to-peer over the internet, with a relay for locked-down networks. Friends can be on any Wi-Fi, any city.</span>
+          </div>
+          <div class="miniCard" id="modeLAN">
+            <b>⚡ Same Wi-Fi · direct</b>
+            <span>Straight to this Mac — no signalling cloud, no relay, nothing in the middle. Fastest, but everyone must be on this network.</span>
+          </div>
+        </div>
+        <div class="sub" id="modeNote" style="margin-top:8px;font-size:12.5px;"></div>
         <h2>Your name</h2>
         <input id="lanName" maxlength="14" placeholder="Player name"
           style="font:inherit;padding:10px 14px;border-radius:12px;border:2px solid #edf0f5;width:220px;" />
@@ -338,7 +359,14 @@
         <div class="sub" id="lanError" style="color:#d98a8a;margin-top:10px;"></div>
       </div>
       <div id="lobbyRoom" class="hidden">
-        <div class="sub">Room code: <b id="roomCode" style="font-size:22px;letter-spacing:4px;color:#7c88b5;">----</b></div>
+        <div class="sub" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+          Room code: <b id="roomCode" style="font-size:22px;letter-spacing:4px;color:#7c88b5;">----</b>
+          <button class="ghost" id="btnCopyCode" style="padding:6px 12px;font-size:12px;border-radius:10px;">Copy code</button>
+          <button class="ghost" id="btnCopyLink" style="padding:6px 12px;font-size:12px;border-radius:10px;">Copy invite link</button>
+          <span id="netStat" style="margin-left:auto;font-weight:700;font-size:12px;"></span>
+        </div>
+        <div class="sub hidden" id="lanInvite"
+          style="background:#f4f8f5;border:2px solid #e2ece6;border-radius:12px;padding:10px 14px;margin-bottom:10px;color:#6f7c8d;font-size:12.5px;"></div>
         <h2>Players</h2>
         <div id="rosterList" style="display:flex;flex-direction:column;gap:6px;margin-bottom:8px;"></div>
         <h2>Your face <span class="sub" style="font-weight:400;">(optional)</span></h2>

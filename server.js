@@ -17,9 +17,28 @@ const MIME = {
   '.ico': 'image/x-icon',
 };
 
+// The addresses a joiner on this network can actually reach us at.
+function lanURLs() {
+  const urls = [];
+  for (const ifaces of Object.values(os.networkInterfaces())) {
+    for (const i of ifaces || []) {
+      if (i.family === 'IPv4' && !i.internal) urls.push(`http://${i.address}:${PORT}`);
+    }
+  }
+  return urls;
+}
+
 const server = http.createServer((req, res) => {
   let urlPath = decodeURIComponent(req.url.split('?')[0]);
   if (urlPath === '/') urlPath = '/index.html';
+  // Direct-mode probe: the lobby hits this to find out whether this page is
+  // being served by THIS relay (so ws rooms will work) and what address to
+  // hand out. A static/offline copy of the game 404s here — which is exactly
+  // how the lobby knows to grey the Direct option out.
+  if (urlPath === '/lan-info') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    return res.end(JSON.stringify({ ok: true, port: Number(PORT), urls: lanURLs() }));
+  }
   const filePath = path.join(ROOT, path.normalize(urlPath));
   if (!filePath.startsWith(ROOT)) { res.writeHead(403); return res.end('forbidden'); }
   fs.readFile(filePath, (err, data) => {
@@ -86,6 +105,9 @@ wss.on('connection', (ws) => {
       case 'team':
         if (room) { room.teams.set(ws._id, m.idx); castRoster(room); }
         break;
+      case 'ping': // joiner → host, round-trip latency probe
+        if (room && room.host !== ws) send(room.host, { t: 'ping', from: ws._id, ts: m.ts });
+        break;
       case 'input': // joiner → host
         if (room && room.host !== ws) send(room.host, { t: 'input', from: ws._id, d: m.d });
         break;
@@ -126,10 +148,6 @@ wss.on('connection', (ws) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  ⚽ Pastel Pitch`);
   console.log(`  Local:   http://localhost:${PORT}`);
-  for (const ifaces of Object.values(os.networkInterfaces())) {
-    for (const i of ifaces || []) {
-      if (i.family === 'IPv4' && !i.internal) console.log(`  LAN:     http://${i.address}:${PORT}  ← share this with joiners`);
-    }
-  }
+  for (const url of lanURLs()) console.log(`  LAN:     ${url}  ← share this with joiners`);
   console.log('');
 });

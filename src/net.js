@@ -32,6 +32,9 @@ export class Net {
   join(code, name) { this.send({ t: 'join', code, name }); }
   pickTeam(idx) { this.send({ t: 'team', idx }); }
   sendInput(d) { this.send({ t: 'input', d }); }
+  // Latency probe: the host echoes this back as a { k:'pong' } cast, so the
+  // number we show is a real joiner→host→joiner round trip, not a server hop.
+  sendPing(ts) { this.send({ t: 'ping', ts }); }
   sendAvatar(d) { this.send({ t: 'avatar', d }); }
   sendCustom(def) { this.send({ t: 'customteam', def }); }
   cast(d) { this.send({ t: 'cast', d }); }

@@ -191,6 +191,7 @@ export class RtcNet {
     if (!rec) return; // rt packet arrived before the client's evt handshake
     if (m.t === 'team') { rec.team = m.idx; this._castRoster(); }
     else if (m.t === 'input') this._emit('input', { t: 'input', from: rec.id, d: m.d });
+    else if (m.t === 'ping') this._emit('ping', { t: 'ping', from: rec.id, ts: m.ts });
     else if (m.t === 'avatar') this._emit('avatar', { t: 'avatar', from: rec.id, d: m.d });
     else if (m.t === 'customteam') this._emit('customteam', { t: 'customteam', from: rec.id, def: m.def });
   }
@@ -296,6 +297,10 @@ export class RtcNet {
     else if (this.conn?.open) this.conn.send({ t: 'input', d: mv });
     if (d.e?.length && this.conn?.open) this.conn.send({ t: 'input', d: { e: d.e } });
   }
+
+  // Latency probe. Reliable channel on purpose: an unreliable ping that gets
+  // dropped would read as lag that isn't there.
+  sendPing(ts) { if (this.conn?.open) this.conn.send({ t: 'ping', ts }); }
 
   // Avatar (a face image dataURL) is rare + must arrive intact → reliable channel.
   sendAvatar(d) { if (this.conn?.open) this.conn.send({ t: 'avatar', d }); }
