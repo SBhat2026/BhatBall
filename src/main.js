@@ -928,12 +928,16 @@ function renderLobbyStatus() {
   // The LAN server mode needs a server; the other two need the room-code service.
   // Green means verified, not assumed.
   const ready = netMode === 'server' ? !!lanInfo : (!!window.Peer && signalOk === true);
-  // Couldn't reach the code service? Say so in red, but leave the buttons live —
-  // a probe that's wrong shouldn't be able to lock anyone out of their own game.
   const blocked = netMode !== 'server' && signalOk === false;
+  // The buttons stay LIVE while we're still checking. The check takes about a
+  // second, and a player who clicks inside that second used to get nothing at
+  // all — a disabled button swallows the click silently, which reads exactly
+  // like a broken game. Only a mode that genuinely cannot be attempted (no
+  // PeerJS at all, or the LAN server not running) disables anything.
+  const impossible = netMode === 'server' ? !lanInfo : !window.Peer;
   row.classList.toggle('ready', ready);
-  row.classList.toggle('bad', blocked || (netMode === 'server' && !lanInfo));
-  for (const b of btns) { b.disabled = !ready && !blocked; b.classList.toggle('dim', !ready && !blocked); }
+  row.classList.toggle('bad', blocked || impossible);
+  for (const b of btns) { b.disabled = impossible; b.classList.toggle('dim', impossible); }
   $('btnHost').classList.toggle('ready', ready); // grey → green the moment it can host
   if (ready && netMode === 'wifi') txt.textContent = 'Ready — host a room, no setup needed';
   else if (ready && netMode === 'server') txt.textContent = `Ready — LAN server on ${lanInfo.urls[0] || 'this Mac'}`;
@@ -1064,6 +1068,8 @@ function startNetStat() {
 }
 
 function stopNetChatter() {
+  clearTimeout(hostTimer);
+  joinPhase = null;
   clearInterval(pingTimer); pingTimer = null;
   clearInterval(statTimer); statTimer = null;
   lastRtt = null;
@@ -1459,7 +1465,12 @@ async function connectNet({ lanOnly = false } = {}) {
   // knows or cares which one it got.
   net = netMode === 'server' ? new Net() : new RtcNet({ lanOnly });
   await net.connect();
-  net.on('err', (m) => { joinPhase = null; $('lanError').textContent = m.msg; renderLobbyStatus(); });
+  net.on('err', (m) => {
+    clearTimeout(hostTimer);
+    joinPhase = null;
+    $('lanError').textContent = m.msg;
+    renderLobbyStatus();
+  });
   net.on('roster', (m) => { roster = m.roster; renderRoster(); renderNetStat(); });
   net.on('close', () => {
     if (!netRole) return;
@@ -1469,9 +1480,26 @@ async function connectNet({ lanOnly = false } = {}) {
   });
 }
 
+let hostTimer = null;
+
 $('btnHost').onclick = async () => {
+  if (joinPhase) return; // an attempt is already in flight
   audio.init();
   usingFallback = false;
+  // Say something the instant the button is pressed. Opening a room takes a
+  // round trip to the signalling service, and silence for a second reads as a
+  // dead button.
+  joinPhase = 'Opening room…';
+  renderLobbyStatus();
+  clearTimeout(hostTimer);
+  hostTimer = setTimeout(() => {
+    if (!joinPhase) return; // room opened; nothing to report
+    joinPhase = null;
+    renderLobbyStatus();
+    $('lanError').textContent = netMode === 'server'
+      ? 'The LAN server did not answer. Check that npm start is still running.'
+      : 'The room service did not answer — this network may be blocking it. Try again, or use the LAN server if you have one.';
+  }, 10000);
   // A HOST always gathers full ICE, even in Same Wi-Fi mode: it costs nothing
   // (ICE still picks the local pair for someone in the room) and it means a
   // joiner whose local attempt fails can fall back and still get in, instead of
@@ -1479,6 +1507,8 @@ $('btnHost').onclick = async () => {
   try { await connectNet(); } catch { $('lanError').textContent = noRoomMsg(); return; }
   netRole = 'host';
   net.on('created', (m) => {
+    clearTimeout(hostTimer);
+    joinPhase = null;
     $('roomCode').textContent = m.code;
     $('lobbyChoice').classList.add('hidden');
     $('lobbyRoom').classList.remove('hidden');
@@ -1580,6 +1610,7 @@ async function startJoin({ lanOnly }) {
 }
 
 $('btnJoin').onclick = () => {
+  if (joinPhase) return; // an attempt is already in flight
   audio.init();
   usingFallback = false;
   joinPhase = netMode === 'wifi' ? 'Looking for the room on this Wi-Fi…' : 'Connecting…';
