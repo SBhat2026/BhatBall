@@ -872,6 +872,26 @@ const MODE_UI = {
   server: { card: 'modeSRV', label: '🖧 LAN server' },
 };
 
+// Is the room-code service actually reachable from this network? This is the
+// one thing that has to work before ANY code-based room can be hosted, and a
+// school firewall blocking it is otherwise only discovered by clicking Host and
+// watching nothing happen. 0.peerjs.com/peerjs/id is the same endpoint PeerJS
+// itself calls, and it answers in a few hundred bytes.
+let signalOk = null; // null = still checking, true = verified, false = no answer
+let signalProbed = false;
+async function probeSignal() {
+  if (signalProbed) return signalOk;
+  signalProbed = true;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 4000);
+    const r = await fetch('https://0.peerjs.com/peerjs/id', { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(t);
+    signalOk = r.ok;
+  } catch { signalOk = false; }
+  return signalOk;
+}
+
 async function probeLan() {
   if (lanProbed) return lanInfo;
   lanProbed = true;
@@ -902,19 +922,26 @@ function renderLobbyStatus() {
     row.classList.remove('ready', 'bad');
     txt.textContent = joinPhase;
     for (const b of btns) { b.disabled = true; b.classList.add('dim'); }
+    $('btnHost').classList.remove('ready');
     return;
   }
-  // Wi-Fi and Anywhere only need the PeerJS script, which ships with the page —
-  // so the room is hostable immediately, with no probe to wait for.
-  const ready = netMode === 'server' ? !!lanInfo : !!window.Peer;
+  // The LAN server mode needs a server; the other two need the room-code service.
+  // Green means verified, not assumed.
+  const ready = netMode === 'server' ? !!lanInfo : (!!window.Peer && signalOk === true);
+  // Couldn't reach the code service? Say so in red, but leave the buttons live —
+  // a probe that's wrong shouldn't be able to lock anyone out of their own game.
+  const blocked = netMode !== 'server' && signalOk === false;
   row.classList.toggle('ready', ready);
-  row.classList.toggle('bad', !ready);
-  for (const b of btns) { b.disabled = !ready; b.classList.toggle('dim', !ready); }
+  row.classList.toggle('bad', blocked || (netMode === 'server' && !lanInfo));
+  for (const b of btns) { b.disabled = !ready && !blocked; b.classList.toggle('dim', !ready && !blocked); }
+  $('btnHost').classList.toggle('ready', ready); // grey → green the moment it can host
   if (ready && netMode === 'wifi') txt.textContent = 'Ready — host a room, no setup needed';
   else if (ready && netMode === 'server') txt.textContent = `Ready — LAN server on ${lanInfo.urls[0] || 'this Mac'}`;
   else if (ready) txt.textContent = 'Ready — room over the internet';
+  else if (blocked) txt.textContent = 'Room codes couldn\'t be reached on this network — hosting may fail. Try anyway, or use the LAN server.';
   else if (netMode === 'server') txt.textContent = 'Not ready — the LAN server stopped. Run npm start, or pick another mode.';
-  else txt.textContent = 'Not ready — the room code service could not load. Reload the page.';
+  else if (!window.Peer) txt.textContent = 'Not ready — the room code library didn\'t load. Reload the page.';
+  else txt.textContent = 'Checking the room service…';
 }
 
 function renderNetMode() {
@@ -945,7 +972,8 @@ function openLobby() {
   $('lanError').textContent = '';
   $('lanName').value = $('lanName').value || localStorage.getItem(NAME_KEY) || '';
   renderNetMode();
-  probeLan().then(renderNetMode); // the server card appears if one is running
+  probeSignal().then(renderNetMode); // grey → green once codes are known to work
+  probeLan().then(renderNetMode);    // the server card appears if one is running
 }
 
 $('btnLAN').onclick = openLobby;
@@ -965,6 +993,9 @@ $('lanCode').addEventListener('input', (e) => {
   e.target.value = m.join('').slice(0, 4);
 });
 $('lanCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
+// The name is pre-filled from last time, so clicking into it and typing should
+// replace it, not append to it.
+$('lanName').addEventListener('focus', (e) => e.target.select());
 $('lanName').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter') return;
   ($('lanCode').value.length === 4 ? $('btnJoin') : $('btnHost')).click();

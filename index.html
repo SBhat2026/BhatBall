@@ -86,8 +86,14 @@
   button:hover { transform: translateY(-1px); }
   button.ghost { background: #eef1f6; color: var(--ink); box-shadow: none; }
   button.ghost.dim { opacity: .55; cursor: default; }
-  button:disabled { opacity: .5; cursor: default; box-shadow: none; }
+  /* Readiness is said in colour, not just words: the Host button is inert grey
+     until a room can actually be opened, then turns the same green as the
+     "Ready" dot below it. */
+  button:disabled { cursor: default; box-shadow: none; background: #e6e9ef; color: #aeb5c2; }
+  button.ghost:disabled { background: #f1f3f7; color: #b9bfca; }
   button:disabled:hover { transform: none; }
+  #btnHost { transition: background .25s, box-shadow .25s; }
+  #btnHost.ready { background: linear-gradient(135deg, #7fb98f, #a8d5b8); box-shadow: 0 6px 20px #7fb98f66; }
 
   /* HUD */
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
