@@ -158,7 +158,14 @@ export class RtcNet {
         peer.destroy();
         this.create(name, team, _attempt + 1); // code collision — roll again
       } else if (!this.code) {
-        this._emit('err', { t: 'err', msg: 'Could not reach the room network — check your connection.' });
+        // Name the actual PeerJS failure — 'network'/'socket-error' means this
+        // network is blocking the signalling websocket, which is a completely
+        // different problem from the room being full or the code being wrong.
+        this._emit('err', {
+          t: 'err',
+          code: e.type,
+          msg: `Could not reach the room service (${e.type || 'unknown'}) — this network may be blocking it. Try Anywhere, another network, or a phone hotspot.`,
+        });
       }
     });
     peer.on('disconnected', () => { if (!this._dead) peer.reconnect(); });

@@ -384,6 +384,7 @@
           <button class="ghost" id="btnLobbyBack">← Back</button>
         </div>
         <div class="sub" id="lanError" style="color:#d98a8a;margin-top:10px;"></div>
+        <div class="sub" id="buildStamp" style="margin-top:6px;font-size:11px;color:#c9ced8;"></div>
       </div>
       <div id="lobbyRoom" class="hidden">
         <div class="sub" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
@@ -513,7 +514,7 @@
     </div>
   </div>
 
-  <script src="./vendor/peerjs.min.js"></script>
+  <script src="./vendor/peerjs.min.js?v=20260907d"></script>
   <!--
     WebRTC ICE servers for Online Rooms. STUN handles same-wifi + most home
     networks; the TURN relay (self-hosted coturn on Fly.io — see tools/turn/fly/)
@@ -556,6 +557,6 @@
       "three/addons/": "./vendor/jsm/"
     } }
   </script>
-  <script type="module" src="./src/main.js"></script>
+  <script type="module" src="./src/main.js?v=20260907d"></script>
 </body>
 </html>

@@ -845,6 +845,7 @@ let clientTape = [];        // client-side rolling snapshot tape for replays
 //   'server' — the WebSocket relay in server.js (the old ?ws mode). The only one
 //              that needs NO internet whatsoever, and the only one that needs
 //              npm start. Offered solely when /lan-info proves it's there.
+export const BUILD = '2026-09-07d'; // shown in the lobby; bump when deploying
 const MODE_KEY = 'bhatball.netMode2'; // v2: 'lan' used to mean the server mode
 const NAME_KEY = 'bhatball.playerName';
 const QS = new URLSearchParams(location.search);
@@ -882,13 +883,25 @@ let signalProbed = false;
 async function probeSignal() {
   if (signalProbed) return signalOk;
   signalProbed = true;
-  try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 4000);
-    const r = await fetch('https://0.peerjs.com/peerjs/id', { signal: ctl.signal, cache: 'no-store' });
-    clearTimeout(t);
-    signalOk = r.ok;
-  } catch { signalOk = false; }
+  if (!window.Peer) { signalOk = false; return signalOk; }
+  // A throwaway peer: if this opens, hosting will open. Cheap (one id from the
+  // cloud, destroyed immediately) and it exercises the websocket, which an HTTP
+  // probe of the same host does not — a network can allow one and block the
+  // other, and then the lobby would promise Ready and hang on Host.
+  signalOk = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { probe.destroy(); } catch { /* already gone */ }
+      resolve(v);
+    };
+    const probe = new window.Peer(undefined, { config: { iceServers: [] } });
+    const timer = setTimeout(() => finish(false), 6000);
+    probe.on('open', () => finish(true));
+    probe.on('error', () => finish(false));
+  });
   return signalOk;
 }
 
@@ -975,6 +988,7 @@ function openLobby() {
   $('lobbyRoom').classList.add('hidden');
   $('lanError').textContent = '';
   $('lanName').value = $('lanName').value || localStorage.getItem(NAME_KEY) || '';
+  $('buildStamp').textContent = `build ${BUILD}`;
   renderNetMode();
   probeSignal().then(renderNetMode); // grey → green once codes are known to work
   probeLan().then(renderNetMode);    // the server card appears if one is running
