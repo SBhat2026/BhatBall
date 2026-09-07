@@ -846,7 +846,12 @@ const MODE_KEY = 'bhatball.netMode';
 const NAME_KEY = 'bhatball.playerName';
 const QS = new URLSearchParams(location.search);
 // ?ws / ?p2p still force a mode (old links and invite links keep working).
-let netMode = QS.has('ws') ? 'lan' : QS.has('p2p') ? 'p2p' : (localStorage.getItem(MODE_KEY) || 'p2p');
+// Otherwise: whatever you picked last time, and failing that Direct — it's the
+// faster, dependency-free path, so it's the default WHENEVER it's available.
+// The probe below decides that; until it answers we sit on Anywhere, which
+// always works.
+const storedMode = localStorage.getItem(MODE_KEY);
+let netMode = QS.has('ws') ? 'lan' : QS.has('p2p') ? 'p2p' : (storedMode || 'p2p');
 let lanInfo = null;      // { port, urls: [...] } once /lan-info answers
 let lanProbed = false;   // probe started
 let lanProbeDone = false;// probe finished — only then is "no Direct" a fact
@@ -865,6 +870,8 @@ async function probeLan() {
     if (r.ok) lanInfo = await r.json();
   } catch { lanInfo = null; } // file://, a static host, or the server is down
   lanProbeDone = true;
+  // No explicit preference yet? Take the fast path now that we know it exists.
+  if (lanInfo && !storedMode && !QS.has('p2p')) netMode = 'lan';
   return lanInfo;
 }
 
@@ -873,6 +880,20 @@ function setNetMode(m) {
   netMode = m;
   localStorage.setItem(MODE_KEY, m);
   renderNetMode();
+}
+
+function renderLobbyStatus() {
+  const row = $('lobbyStatus');
+  const txt = $('lobbyStatusText');
+  const btns = [$('btnHost'), $('btnJoin')];
+  const ready = lanProbeDone && (netMode === 'lan' ? !!lanInfo : !!window.Peer);
+  row.classList.toggle('ready', ready);
+  row.classList.toggle('bad', lanProbeDone && !ready);
+  for (const b of btns) { b.disabled = !ready; b.classList.toggle('dim', !ready); }
+  if (!lanProbeDone) txt.textContent = 'Checking your network…';
+  else if (ready && netMode === 'lan') txt.textContent = `Ready — Direct room on ${lanInfo.urls[0] || 'this Mac'}`;
+  else if (ready) txt.textContent = 'Ready — room over the internet';
+  else txt.textContent = 'Not ready — the room network could not be reached. Reload, or check your connection.';
 }
 
 function renderNetMode() {
@@ -893,6 +914,8 @@ function renderNetMode() {
   } else {
     note.textContent = 'Joiners can be on any network — they only need the code. Falls back to the TURN relay on strict Wi-Fi.';
   }
+  $('lanTag').textContent = !lanProbeDone ? 'Checking…' : lanInfo ? 'Fastest · ready' : 'Needs npm start';
+  renderLobbyStatus();
 }
 
 $('modeP2P').onclick = () => setNetMode('p2p');
